@@ -1,0 +1,21 @@
+configuration:
+  github_repository:
+    name: Dépôt GitHub
+    description: >-
+      Le dépôt à synchroniser, au format "propriétaire/depot" (ex.
+      "octocat/ma-config-home-assistant"). Laissez vide à la première
+      installation : l'Application affichera une Deploy Key à ajouter
+      d'abord sur ce dépôt.
+  github_branch:
+    name: Branche
+    description: >-
+      La branche à suivre. "main" par défaut.
+  mappings:
+    name: Mappings
+    description: >-
+      La liste des fichiers ou répertoires que cette Application est
+      autorisée à comparer et, sur confirmation explicite, à déployer.
+      Chaque entrée nécessite un id unique, un chemin Home Assistant
+      (sous /config), un chemin Git (relatif à la racine du dépôt) et
+      une direction. Seule direction: git_to_ha est implémentée
+      aujourd'hui.

@@ -1,0 +1,127 @@
+# Homelab Git Management
+
+Controlled, one-way (for now) sync between a GitHub repository and your Home
+Assistant configuration: clone → compare → review → confirm → deploy →
+verify → automatic rollback on failure.
+
+[![Buy me a beer](https://img.shields.io/badge/Buy%20me%20a%20beer-%F0%9F%8D%BA-orange?style=for-the-badge)](https://www.buymeacoffee.com/Monsieurgg)
+
+## This is a Home Assistant Application (Add-on) — not a HACS integration
+
+This distinction matters, because it changes how you install this project:
+
+- **HACS** distributes `custom_components` — Python integrations that run
+  *inside* the Home Assistant Core process and add entities/devices.
+- **This project is an Application/Add-on**: a separate Docker container,
+  managed by the Supervisor, with its own web UI reachable through
+  Home Assistant's Ingress. It never runs inside Home Assistant Core and
+  it has no `custom_components` folder, no `manifest.json`, no config
+  flow — none of that applies here.
+
+That also means you will **not** find this add-on by searching inside HACS,
+and it is not installed through it. See [Installation](#installation) below
+for the real procedure.
+
+## What it does
+
+1. Generates its own SSH keypair on first start and shows you the public
+   half in its web UI, ready to paste into GitHub as a **read-only**
+   Deploy Key.
+2. Clones your repository (read-only) into a persistent volume.
+3. Compares each file/directory you map between the Git clone and your
+   live Home Assistant configuration (byte-for-byte, with a lenient
+   "equivalent" classification for line-ending/BOM-only differences).
+4. Shows you the result and, only for mappings you configured with
+   `direction: git_to_ha` and where a real difference exists, offers a
+   **Deploy** button.
+5. On click, after a browser confirmation, it backs up the current file,
+   writes the new one atomically, verifies the result byte-for-byte, and
+   automatically restores the backup if anything about that verification
+   doesn't check out.
+
+Nothing is compared or deployable until you explicitly configure it — the
+default is to manage nothing at all.
+
+## Installation
+
+1. In Home Assistant, go to **Settings → Add-ons → Add-on Store**.
+2. Click the **⋮** menu (top right) → **Repositories**.
+3. Add this URL: `https://github.com/Monsieurgg/ha-git-management`
+4. Find **Homelab Git Management** in the store and install it.
+5. Start it once. Open its **Web UI** (Ingress panel) — it will show a
+   setup screen with a public SSH key.
+6. On GitHub, go to your repository → **Settings → Deploy keys → Add deploy
+   key**, paste the key, and leave "Allow write access" **unchecked**
+   (this add-on only ever needs read access).
+7. Back in Home Assistant, open the add-on's **Configuration** tab and set:
+   - `github_repository`: `owner/repository`
+   - `github_branch`: e.g. `main`
+   - `mappings`: the files/directories you want it to manage (see below)
+8. Restart the add-on.
+
+## Configuring mappings
+
+Each mapping is:
+
+```yaml
+mappings:
+  - id: dashboard_main
+    kind: file            # "file" (default) or "directory"
+    ha_path: /config/dashboard.yaml
+    git_path: home-assistant/dashboard.yaml
+    direction: git_to_ha   # the only direction implemented today
+```
+
+- `id`: a short identifier, letters/digits/`_`/`-` only, used as the
+  deploy target.
+- `ha_path`: absolute path under `/config` (your live Home Assistant
+  configuration directory).
+- `git_path`: path relative to the repository root.
+- `direction`: `git_to_ha`, `ha_to_git`, or `bidirectional`. Only
+  `git_to_ha` is implemented in this release — the other two are accepted
+  by the configuration schema for forward compatibility, but the add-on
+  refuses to start with a clear error if you configure one, rather than
+  silently doing nothing.
+
+Home Assistant's own `configuration.yaml`, `scripts.yaml`,
+`automations.yaml` and `scenes.yaml` are always protected against
+`git_to_ha` deployment, regardless of what you map them to — you can still
+map them for *comparison* (to see drift), just never for automatic
+deployment.
+
+## Security
+
+- GitHub is only ever reached read-only, through a Deploy Key generated
+  and stored entirely inside this add-on's own persistent data volume —
+  never baked into the image, never leaves the add-on;
+- the Git clone is only ever fast-forwarded; a locally modified or
+  diverged clone makes the add-on refuse to continue;
+- every deployment requires, at the same time: a mapping with
+  `direction: git_to_ha`, a real detected difference, and an explicit
+  confirmation click in the browser;
+- every write is preceded by a persistent backup, performed atomically
+  (`os.replace`), and verified byte-for-byte; a failed verification
+  triggers an automatic rollback;
+- directory deployment is intentionally not supported (comparison only) —
+  a deliberate reduction of risk;
+- the web UI never displays file contents or secrets, only comparison
+  state.
+
+## Support this project
+
+If this saves you from copy-pasting YAML by hand, you can buy me a beer:
+[buymeacoffee.com/Monsieurgg](https://www.buymeacoffee.com/Monsieurgg).
+
+## Finding this add-on
+
+There is no HACS-style automatic discovery for third-party Home Assistant
+Add-on repositories — you (or anyone using this) always add the repository
+URL manually once, as described above. See `DOCS.md` for more on
+visibility and where this kind of project can realistically be listed.
+
+## Documentation
+
+See [`homelab_git_management/DOCS.md`](homelab_git_management/DOCS.md) for
+the full add-on documentation and
+[`CHANGELOG.md`](homelab_git_management/CHANGELOG.md) for the version
+history.

@@ -1,0 +1,81 @@
+# =============================================================================
+# HOMELAB GIT MANAGEMENT — ADD-ON CONFIGURATION
+# =============================================================================
+#
+# This declares a Home Assistant Application/Add-on (Supervisor), not a
+# custom_component / integration. It ships as a Docker image with an
+# Ingress web UI; it is not distributed through HACS.
+#
+# =============================================================================
+
+name: "Homelab Git Management"
+version: "0.1.0"
+slug: "homelab_git_management"
+
+description: >-
+  Controlled Git <-> Home Assistant sync: compare a private/public GitHub
+  repository against your live configuration, review each difference, and
+  deploy only what you explicitly confirm.
+
+url: "https://github.com/Monsieurgg/ha-git-management"
+
+arch:
+  - aarch64
+  - amd64
+
+startup: application
+boot: manual
+init: false
+
+# Commands are sent over stdin, controlled by the Supervisor.
+stdin: true
+
+# Ingress-only web UI. No port is published on the LAN.
+ingress: true
+ingress_port: 8099
+
+panel_title: "Homelab Git Management"
+panel_icon: "mdi:source-branch"
+panel_admin: true
+
+# The add-on writes to Home Assistant's own config directory only, since
+# the deploy engine's job is to copy files from the Git clone into it.
+# There is no second mount for the add-on's own source: this add-on never
+# modifies itself. Updates go exclusively through the normal Supervisor
+# "Update" flow (a new version published in this repository, then rebuilt
+# by Supervisor) — the same mechanism as any other add-on.
+map:
+  - type: homeassistant_config
+    read_only: false
+    path: /homeassistant
+
+# -----------------------------------------------------------------------
+# OPTIONS
+#
+# `options` holds the *default* values shown the first time a user opens
+# the Configuration tab. `schema` describes the type/shape Supervisor
+# must enforce for whatever the user then saves — Supervisor validates
+# against it before ever writing /data/options.json, so the add-on code
+# can trust the shape of what it reads (though it still re-validates,
+# since options.json can in principle be edited by other means).
+#
+# mappings defaults to an empty list: with nothing configured, the add-on
+# manages zero files. Each mapping is opt-in and requires its own
+# `direction`, which is the deny-by-default policy in practice — nothing
+# is comparable or deployable until a user explicitly adds it here.
+# -----------------------------------------------------------------------
+
+options:
+  github_repository: ""
+  github_branch: "main"
+  mappings: []
+
+schema:
+  github_repository: "str"
+  github_branch: "str"
+  mappings:
+    - id: "match(^[A-Za-z0-9_-]+$)"
+      kind: "list(file|directory)?"
+      ha_path: "str"
+      git_path: "str"
+      direction: "list(git_to_ha|ha_to_git|bidirectional)"

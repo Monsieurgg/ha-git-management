@@ -1,0 +1,19 @@
+configuration:
+  github_repository:
+    name: GitHub repository
+    description: >-
+      The repository to sync with, as "owner/repository" (e.g.
+      "octocat/my-home-assistant-config"). Leave empty on first install:
+      the add-on will show a Deploy Key to add to this repository first.
+  github_branch:
+    name: Branch
+    description: >-
+      The branch to track. Defaults to "main".
+  mappings:
+    name: Mappings
+    description: >-
+      The list of files or directories this add-on is allowed to compare
+      and, on explicit confirmation, deploy. Each entry needs a unique
+      id, a Home Assistant path (under /config), a Git path (relative to
+      the repository root) and a direction. Only direction: git_to_ha is
+      implemented today.

@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+
+  yamllint:
+    name: yamllint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ibiqlik/action-yamllint@v3
+        with:
+          config_data: |
+            extends: default
+            rules:
+              line-length: disable
+              document-start: disable
+
+  hadolint:
+    name: hadolint (Dockerfile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: homelab_git_management/Dockerfile
+
+  addon-linter:
+    name: Home Assistant add-on linter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: frenck/action-addon-linter@v2
+        with:
+          path: "./homelab_git_management"
+
+  build:
+    name: Build (${{ matrix.arch }}, no push)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, aarch64]
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: aarch64
+            platform: linux/arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (test only, not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./homelab_git_management
+          platforms: ${{ matrix.platform }}
+          push: false
+          build-args: |
+            BUILD_VERSION=ci-test
+            BUILD_ARCH=${{ matrix.arch }}
+
+  secrets-scan:
+    name: No secrets / personal paths
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for obvious secret or private-path leftovers
+        run: |
+          set -e
+          # This is a lightweight guardrail, not a substitute for review:
+          # it greps for patterns that should never appear in this public
+          # repository (private SSH keys, and paths/identifiers specific
+          # to the private homelab this add-on was generalized from).
+          if grep -RIn --exclude-dir=.git --exclude=ci.yml -E \
+              "BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY|homelab-intern-private|Monsieurgg/homelab" \
+              .; then
+            echo "::error::Found a private key marker or a private-repo reference"
+            exit 1
+          fi
+          echo "No obvious secret or private-repo reference found."
