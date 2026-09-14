@@ -2,6 +2,11 @@
 
 All notable changes to this add-on are documented here.
 
+## 0.1.1
+
+- First-time setup screen rewritten as four numbered steps instead of a
+  single paragraph, with a "Copy" button next to the public key.
+
 ## 0.1.0 — Initial public release
 
 - First public release, generalized from a private single-user build:

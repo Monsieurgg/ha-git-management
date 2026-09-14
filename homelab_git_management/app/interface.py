@@ -106,6 +106,11 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
 .key-box { display: block; width: 100%; padding: 12px; background: var(--surface-soft); border: 1px solid var(--border);
   border-radius: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;
   word-break: break-all; white-space: pre-wrap; user-select: all; }
+.key-row { display: flex; gap: 8px; align-items: flex-start; }
+.key-row .key-box { flex: 1; }
+.key-row button { flex-shrink: 0; white-space: nowrap; }
+.setup-steps { margin: 0 0 18px; padding-left: 22px; }
+.setup-steps li { margin-bottom: 10px; line-height: 1.5; }
 .field-row { margin: 10px 0; font-size: 13px; }
 .field-row .label { color: var(--muted); margin-right: 6px; }
 .badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 8px; white-space: nowrap; font-size: 11px; font-weight: 700; }
@@ -146,9 +151,17 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
   <div id="setup-panel" class="panel" hidden>
     <div class="panel-header"><h2 data-i18n="setup_title">First-time setup</h2></div>
     <div class="panel-body">
-      <p id="setup-body" data-i18n="setup_body"></p>
+      <ol class="setup-steps">
+        <li data-i18n="setup_step1">Copy the public key below.</li>
+        <li data-i18n="setup_step2">On GitHub, open this repository's own Settings -> Deploy keys -> Add deploy key (not your personal account settings).</li>
+        <li data-i18n="setup_step3">Paste the key, leave "Allow write access" unchecked, and save.</li>
+        <li data-i18n="setup_step4">Come back here, open this add-on's Configuration tab, set github_repository (owner/repository) and github_branch, then restart it.</li>
+      </ol>
       <div class="field-row"><span class="label" data-i18n="setup_key_label">Public key</span></div>
-      <code id="setup-key" class="key-box">—</code>
+      <div class="key-row">
+        <code id="setup-key" class="key-box">—</code>
+        <button id="copy-key" type="button" data-i18n="copy_key">Copy</button>
+      </div>
       <div class="field-row"><span class="label" data-i18n="setup_repo_label">Configured repository</span><span id="setup-repo">—</span></div>
       <div class="field-row"><span class="label" data-i18n="setup_branch_label">Configured branch</span><span id="setup-branch">—</span></div>
     </div>
@@ -239,11 +252,15 @@ const STRINGS = {
     deploying: "Deploying...",
     confirm_deploy: 'Deploy "{target}" from GitHub to Home Assistant?\n\nA backup of the current file will be created before writing. If verification fails, an automatic rollback restores the previous content.',
     setup_title: "First-time setup",
-    setup_body: "No GitHub repository is configured yet. Copy the public key below and add it as a read-only Deploy Key on your repository (GitHub -> Settings -> Deploy keys -> Add deploy key), then set github_repository (owner/repository) and github_branch in this add-on's Configuration tab and restart it.",
+    setup_step1: "Copy the public key below.",
+    setup_step2: "On GitHub, open this repository's own Settings -> Deploy keys -> Add deploy key (not your personal account settings).",
+    setup_step3: 'Paste the key, leave "Allow write access" unchecked, and save.',
+    setup_step4: "Come back here, open this add-on's Configuration tab, set github_repository (owner/repository) and github_branch, then restart it.",
     setup_key_label: "Public key:",
     setup_repo_label: "Configured repository:",
     setup_branch_label: "Configured branch:",
     setup_none: "not set",
+    copy_key: "Copy", copied_key: "Copied!",
   },
   fr: {
     title: "Homelab Git Management",
@@ -270,10 +287,14 @@ const STRINGS = {
     deploying: "Déploiement...",
     confirm_deploy: 'Déployer « {target} » de GitHub vers Home Assistant ?\n\nUne sauvegarde du fichier actuel sera créée avant l\'écriture. En cas d\'échec de la vérification, un rollback automatique restaure l\'ancien contenu.',
     setup_title: "Configuration initiale",
-    setup_body: "Aucun dépôt GitHub n'est configuré. Copiez la clé publique ci-dessous et ajoutez-la comme Deploy Key en lecture seule sur votre dépôt (GitHub -> Settings -> Deploy keys -> Add deploy key), puis renseignez github_repository (owner/repository) et github_branch dans l'onglet Configuration de cette Application et redémarrez-la.",
+    setup_step1: "Copiez la clé publique ci-dessous.",
+    setup_step2: "Sur GitHub, ouvrez les Settings DU DÉPÔT lui-même -> Deploy keys -> Add deploy key (pas les paramètres de votre compte personnel).",
+    setup_step3: 'Collez la clé, laissez "Allow write access" décoché, et enregistrez.',
+    setup_step4: "Revenez ici, ouvrez l'onglet Configuration de cette Application, renseignez github_repository (owner/repository) et github_branch, puis redémarrez-la.",
     setup_key_label: "Clé publique :",
     setup_repo_label: "Dépôt configuré :",
     setup_branch_label: "Branche configurée :",
+    copy_key: "Copier", copied_key: "Copié !",
     setup_none: "non défini",
   },
 };
@@ -478,8 +499,31 @@ async function deployerElement(cible, bouton) {
   }
 }
 
+async function copierCle() {
+  const bouton = el("copy-key");
+  const cle = el("setup-key").textContent;
+
+  if (!cle || cle === "—") return;
+
+  try {
+    await navigator.clipboard.writeText(cle);
+  } catch (exception) {
+    return;
+  }
+
+  const libelle = bouton.textContent;
+  bouton.textContent = t("copied_key");
+  bouton.disabled = true;
+
+  setTimeout(() => {
+    bouton.textContent = libelle;
+    bouton.disabled = false;
+  }, 1500);
+}
+
 el("lang-toggle").addEventListener("click", switchLang);
 el("refresh").addEventListener("click", actualiserGit);
+el("copy-key").addEventListener("click", copierCle);
 
 applyTranslations();
 chargerEtatSiConfigure();
@@ -730,7 +774,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/0.1.0"
+    server_version = "HomelabGitManagement/0.1.1"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 
