@@ -2,6 +2,12 @@
 
 All notable changes to this add-on are documented here.
 
+## 0.1.3
+
+- The "Open the Configuration tab" link now sits inline, right next to
+  "Configured repository", instead of as a separate block below the
+  setup steps — easier to notice when that field reads "not set".
+
 ## 0.1.2
 
 - The first-time setup screen now shows an "Open the Configuration tab"

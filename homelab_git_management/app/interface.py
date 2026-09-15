@@ -115,9 +115,8 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
 .key-row button { flex-shrink: 0; white-space: nowrap; }
 .setup-steps { margin: 0 0 18px; padding-left: 22px; }
 .setup-steps li { margin-bottom: 10px; line-height: 1.5; }
-.config-link { display: inline-block; margin-top: 14px; padding: 10px 15px; border: 1px solid var(--accent);
-  border-radius: 10px; color: var(--accent); text-decoration: none; font-weight: 600; font-size: 13px; }
-.config-link:hover { background: var(--info-bg); }
+.config-link-inline { margin-left: 10px; color: var(--accent); text-decoration: underline; font-weight: 600; font-size: 13px; }
+.config-link-inline:hover { text-decoration: none; }
 .field-row { margin: 10px 0; font-size: 13px; }
 .field-row .label { color: var(--muted); margin-right: 6px; }
 .badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 8px; white-space: nowrap; font-size: 11px; font-weight: 700; }
@@ -169,9 +168,11 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
         <code id="setup-key" class="key-box">—</code>
         <button id="copy-key" type="button" data-i18n="copy_key">Copy</button>
       </div>
-      <div class="field-row"><span class="label" data-i18n="setup_repo_label">Configured repository</span><span id="setup-repo">—</span></div>
+      <div class="field-row">
+        <span class="label" data-i18n="setup_repo_label">Configured repository</span><span id="setup-repo">—</span>
+        <a id="setup-config-link" class="config-link-inline" target="_top" hidden data-i18n="setup_open_config">Open the Configuration tab →</a>
+      </div>
       <div class="field-row"><span class="label" data-i18n="setup_branch_label">Configured branch</span><span id="setup-branch">—</span></div>
-      <a id="setup-config-link" class="config-link" target="_top" hidden data-i18n="setup_open_config">Open the Configuration tab</a>
     </div>
   </div>
 
@@ -853,7 +854,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/0.1.2"
+    server_version = "HomelabGitManagement/0.1.3"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 
