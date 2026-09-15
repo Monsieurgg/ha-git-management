@@ -1378,7 +1378,7 @@ def mappings_correspondent(actuels: object, attendus: list) -> bool:
     return normaliser(actuels) == normaliser(attendus)
 
 
-def attendre_options_persistees(mappings_attendus: list, delai_max: float = 4.0) -> bool:
+def attendre_options_persistees(mappings_attendus: list, delai_max: float = 12.0) -> bool:
     """Supervisor's POST /addons/self/options can return success before
     the on-disk options.json this add-on reads is actually updated —
     observed during end-to-end testing: a save was accepted (200) but
@@ -1676,7 +1676,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/0.2.1"
+    server_version = "HomelabGitManagement/0.2.2"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 
