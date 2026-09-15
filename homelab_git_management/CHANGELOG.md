@@ -2,6 +2,14 @@
 
 All notable changes to this add-on are documented here.
 
+## 0.2.6
+
+- The "Manage" column now shows the Deploy button directly when it
+  applies, and everything else (Edit, Delete, and future actions) is
+  tucked behind a small "⋮" menu instead of a row of separate buttons —
+  keeps the table from getting more crowded as more actions get added
+  over time.
+
 ## 0.2.5
 
 - Merged the two dashboard tables ("Managed elements status" and

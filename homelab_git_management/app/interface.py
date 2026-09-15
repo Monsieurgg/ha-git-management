@@ -99,7 +99,7 @@ button { border: 1px solid var(--border); background: var(--surface); color: var
   border-radius: 10px; padding: 10px 15px; cursor: pointer; font: inherit; }
 button:hover { border-color: var(--accent); }
 button:disabled { opacity: 0.5; cursor: default; }
-.action-deploy { margin-left: 8px; padding: 4px 10px; font-size: 12px; border-color: var(--candidate); color: var(--candidate); }
+.action-deploy { margin-right: 6px; padding: 4px 10px; font-size: 12px; border-color: var(--candidate); color: var(--candidate); }
 .summary { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 12px; margin-bottom: 18px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 15px; box-shadow: var(--shadow); }
 .card-label { color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
@@ -147,8 +147,6 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
   .summary { grid-template-columns: repeat(2, minmax(0,1fr)); }
 }
 button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-.action-edit, .action-delete { margin-right: 6px; padding: 4px 10px; font-size: 12px; }
-.action-delete { border-color: var(--danger); color: var(--danger); }
 .modal-overlay { display: flex; align-items: center; justify-content: center; position: fixed; inset: 0;
   background: rgba(15,23,42,0.45); z-index: 50; padding: 16px; }
 .modal { background: var(--surface); border-radius: 14px; box-shadow: var(--shadow); width: 100%;
@@ -174,6 +172,15 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
 .browse-entry:last-child { border-bottom: 0; }
 .browse-entry:hover { background: var(--surface-soft); }
 .browse-up { color: var(--muted); font-weight: 600; }
+.kebab-wrapper { position: relative; display: inline-block; }
+.kebab-btn { padding: 4px 10px; font-size: 16px; line-height: 1; }
+.kebab-menu { position: absolute; right: 0; top: 100%; margin-top: 4px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); min-width: 140px;
+  z-index: 20; overflow: hidden; }
+.kebab-menu button { display: block; width: 100%; text-align: left; border: none; border-radius: 0;
+  padding: 9px 12px; background: var(--surface); font-size: 13px; }
+.kebab-menu button:hover { background: var(--surface-soft); border-color: transparent; }
+.kebab-menu button.danger { color: var(--danger); }
 .restart-overlay { position: fixed; inset: 0; background: rgba(255,255,255,0.94); z-index: 100;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
   text-align: center; padding: 24px; }
@@ -512,6 +519,64 @@ function cheminBaseIngress() {
   return window.location.pathname.endsWith("/") ? window.location.pathname : `${window.location.pathname}/`;
 }
 
+let menuKebabOuvert = null;
+
+function fermerMenuKebab() {
+  if (menuKebabOuvert) {
+    menuKebabOuvert.hidden = true;
+    menuKebabOuvert = null;
+  }
+}
+
+document.addEventListener("click", (evenement) => {
+  if (menuKebabOuvert && !menuKebabOuvert.parentElement.contains(evenement.target)) {
+    fermerMenuKebab();
+  }
+});
+
+function construireMenuKebab(fichier) {
+  const enveloppe = document.createElement("div");
+  enveloppe.className = "kebab-wrapper";
+
+  const boutonKebab = document.createElement("button");
+  boutonKebab.type = "button";
+  boutonKebab.className = "kebab-btn";
+  boutonKebab.textContent = "⋮";
+  boutonKebab.setAttribute("aria-label", t("th_manage"));
+
+  const menu = document.createElement("div");
+  menu.className = "kebab-menu";
+  menu.hidden = true;
+
+  const editBtn = document.createElement("button");
+  editBtn.type = "button";
+  editBtn.textContent = t("mapping_edit");
+  editBtn.addEventListener("click", () => { fermerMenuKebab(); ouvrirModalMapping(fichier); });
+  menu.appendChild(editBtn);
+
+  const delBtn = document.createElement("button");
+  delBtn.type = "button";
+  delBtn.className = "danger";
+  delBtn.textContent = t("mapping_delete");
+  delBtn.addEventListener("click", () => { fermerMenuKebab(); supprimerMapping(fichier.id); });
+  menu.appendChild(delBtn);
+
+  boutonKebab.addEventListener("click", (evenement) => {
+    evenement.stopPropagation();
+    const etaitOuvert = menuKebabOuvert === menu;
+    fermerMenuKebab();
+    if (!etaitOuvert) {
+      menu.hidden = false;
+      menuKebabOuvert = menu;
+    }
+  });
+
+  enveloppe.appendChild(boutonKebab);
+  enveloppe.appendChild(menu);
+
+  return enveloppe;
+}
+
 function afficherEtat(donnees) {
   el("version").textContent = donnees.application_version;
   el("managed").textContent = donnees.summary.managed;
@@ -569,17 +634,7 @@ function afficherEtat(donnees) {
       gererCell.appendChild(deployBtn);
     }
 
-    const editBtn = document.createElement("button");
-    editBtn.className = "action-edit";
-    editBtn.textContent = t("mapping_edit");
-    editBtn.addEventListener("click", () => ouvrirModalMapping(fichier));
-    gererCell.appendChild(editBtn);
-
-    const delBtn = document.createElement("button");
-    delBtn.className = "action-delete";
-    delBtn.textContent = t("mapping_delete");
-    delBtn.addEventListener("click", () => supprimerMapping(fichier.id));
-    gererCell.appendChild(delBtn);
+    gererCell.appendChild(construireMenuKebab(fichier));
 
     tr.appendChild(gererCell);
 
@@ -1706,7 +1761,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/0.2.5"
+    server_version = "HomelabGitManagement/0.2.6"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 
