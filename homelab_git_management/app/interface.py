@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import contextlib
 import importlib
 import io
@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -21,11 +22,18 @@ PORT = 8099
 
 APP_VERSION = os.environ.get("APP_VERSION", "unknown")
 
+HA_ROOT = Path("/homeassistant")
 GIT_ROOT = Path("/data/repository")
 OPTIONS_PATH = Path("/data/options.json")
 SSH_PUBLIC_KEY = Path("/data/ssh/github_deploy_key.pub")
 
 SUPERVISOR_API = "http://supervisor"
+
+# Never shown in the directory browser: dotfiles/dotdirs (.git, .storage,
+# .cloud, .ssh, ...) often hold internal state or secrets, never a
+# plausible mapping target — hiding them is a safety default, not a
+# missing feature.
+NOMS_IGNORES_NAVIGATION = {"__pycache__"}
 
 
 ###############################################################################
@@ -106,6 +114,34 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
   .header { align-items: flex-start; flex-direction: column; }
   .summary { grid-template-columns: repeat(2, minmax(0,1fr)); }
 }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.action-edit, .action-delete { margin-right: 6px; padding: 4px 10px; font-size: 12px; }
+.action-delete { border-color: var(--danger); color: var(--danger); }
+.modal-overlay { display: flex; align-items: center; justify-content: center; position: fixed; inset: 0;
+  background: rgba(15,23,42,0.45); z-index: 50; padding: 16px; }
+.modal { background: var(--surface); border-radius: 14px; box-shadow: var(--shadow); width: 100%;
+  max-width: 480px; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; }
+.modal-header { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 15px 17px; border-bottom: 1px solid var(--border); }
+.modal-header h3 { margin: 0; font-size: 16px; }
+.modal-close { border: none; background: none; font-size: 20px; line-height: 1; padding: 4px 8px; }
+.modal-body { padding: 17px; overflow-y: auto; }
+.modal-footer { padding: 13px 17px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+.form-label { display: block; margin: 14px 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.form-label:first-child { margin-top: 0; }
+.form-input { width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px;
+  font: inherit; background: var(--surface-soft); color: var(--text); }
+.form-input:disabled { opacity: 0.6; }
+.path-row { display: flex; gap: 8px; }
+.path-row .form-input { flex: 1; }
+.breadcrumb { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;
+  color: var(--muted); margin-bottom: 10px; word-break: break-all; }
+.browse-list-wrapper { max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; }
+.browse-list { list-style: none; margin: 0; padding: 0; }
+.browse-entry { padding: 9px 12px; cursor: pointer; font-size: 13px; border-bottom: 1px solid var(--border); }
+.browse-entry:last-child { border-bottom: 0; }
+.browse-entry:hover { background: var(--surface-soft); }
+.browse-up { color: var(--muted); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -200,8 +236,92 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
       </div>
     </div>
 
+    <div class="panel">
+      <div class="panel-header">
+        <h2 data-i18n="mappings_title">Configured mappings</h2>
+        <button id="add-mapping" type="button" data-i18n="mappings_add">+ Add a mapping</button>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th data-i18n="th_element">Element</th>
+              <th data-i18n="th_ha_path">HA path</th>
+              <th data-i18n="th_git_path">Git path</th>
+              <th data-i18n="th_direction">Direction</th>
+              <th data-i18n="th_manage">Manage</th>
+            </tr>
+          </thead>
+          <tbody id="mapping-rows"></tbody>
+        </table>
+      </div>
+    </div>
+
   </div>
 
+</div>
+
+<div id="mapping-modal" class="modal-overlay" hidden>
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="mapping-modal-title" data-i18n="mapping_modal_add">Add a mapping</h3>
+      <button id="mapping-modal-close" type="button" class="modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="mapping-error" class="error"></div>
+
+      <label class="form-label" data-i18n="field_id">Identifier</label>
+      <input id="mapping-id" type="text" class="form-input" autocomplete="off">
+
+      <label class="form-label" data-i18n="field_kind">Type</label>
+      <select id="mapping-kind" class="form-input">
+        <option value="file" data-i18n="kind_file">File</option>
+        <option value="directory" data-i18n="kind_directory">Directory (comparison only)</option>
+      </select>
+
+      <label class="form-label" data-i18n="field_direction">Direction</label>
+      <select id="mapping-direction" class="form-input">
+        <option value="git_to_ha" data-i18n="dir_git_to_ha">Git -&gt; Home Assistant</option>
+        <option value="ha_to_git" data-i18n="dir_ha_to_git" disabled>Home Assistant -&gt; Git (coming soon)</option>
+        <option value="bidirectional" data-i18n="dir_bidirectional" disabled>Bidirectional (coming soon)</option>
+      </select>
+
+      <label class="form-label" data-i18n="field_ha_path">Home Assistant path</label>
+      <div class="path-row">
+        <input id="mapping-ha-path" type="text" class="form-input" placeholder="/config/...">
+        <button type="button" class="browse-btn" data-root="ha" data-i18n="browse">Browse…</button>
+      </div>
+
+      <label class="form-label" data-i18n="field_git_path">Git path</label>
+      <div class="path-row">
+        <input id="mapping-git-path" type="text" class="form-input" placeholder="themes/...">
+        <button type="button" class="browse-btn" data-root="git" data-i18n="browse">Browse…</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="mapping-cancel" type="button" data-i18n="cancel">Cancel</button>
+      <button id="mapping-save" type="button" class="primary" data-i18n="save">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="browse-modal" class="modal-overlay" hidden>
+  <div class="modal">
+    <div class="modal-header">
+      <h3 data-i18n="browse_title">Browse</h3>
+      <button id="browse-modal-close" type="button" class="modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="browse-error" class="error"></div>
+      <div id="browse-breadcrumb" class="breadcrumb"></div>
+      <div class="browse-list-wrapper">
+        <ul id="browse-list" class="browse-list"></ul>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="browse-select-here" type="button" data-i18n="browse_select_here">Select this folder</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -241,6 +361,23 @@ const STRINGS = {
     setup_none: "not set",
     copy_key: "Copy", copied_key: "Copied!",
     setup_open_config: "Open the Configuration tab →",
+    mappings_title: "Configured mappings",
+    mappings_add: "+ Add a mapping",
+    th_ha_path: "HA path", th_git_path: "Git path", th_manage: "Manage",
+    mapping_edit: "Edit", mapping_delete: "Delete",
+    mapping_modal_add: "Add a mapping", mapping_modal_edit: "Edit mapping",
+    field_id: "Identifier", field_kind: "Type", field_direction: "Direction",
+    field_ha_path: "Home Assistant path", field_git_path: "Git path",
+    kind_file: "File", kind_directory: "Directory (comparison only)",
+    dir_git_to_ha: "Git -> Home Assistant",
+    dir_ha_to_git: "Home Assistant -> Git (coming soon)",
+    dir_bidirectional: "Bidirectional (coming soon)",
+    browse: "Browse…", browse_title: "Browse",
+    browse_select_here: "Select this folder",
+    cancel: "Cancel", save: "Save",
+    mapping_error_incomplete: "Please fill in the identifier, the HA path and the Git path.",
+    mapping_confirm_delete: 'Delete mapping "{id}"?\n\nThis only removes it from the configuration — no file is touched.',
+    mapping_error_delete: "Could not delete: ",
   },
   fr: {
     title: "Homelab Git Management",
@@ -277,6 +414,23 @@ const STRINGS = {
     copy_key: "Copier", copied_key: "Copié !",
     setup_none: "non défini",
     setup_open_config: "Ouvrir l'onglet Configuration →",
+    mappings_title: "Mappings configurés",
+    mappings_add: "+ Ajouter un mapping",
+    th_ha_path: "Chemin HA", th_git_path: "Chemin Git", th_manage: "Gérer",
+    mapping_edit: "Modifier", mapping_delete: "Supprimer",
+    mapping_modal_add: "Ajouter un mapping", mapping_modal_edit: "Modifier le mapping",
+    field_id: "Identifiant", field_kind: "Type", field_direction: "Direction",
+    field_ha_path: "Chemin Home Assistant", field_git_path: "Chemin Git",
+    kind_file: "Fichier", kind_directory: "Dossier (comparaison uniquement)",
+    dir_git_to_ha: "Git -> Home Assistant",
+    dir_ha_to_git: "Home Assistant -> Git (bientôt disponible)",
+    dir_bidirectional: "Bidirectionnel (bientôt disponible)",
+    browse: "Parcourir…", browse_title: "Parcourir",
+    browse_select_here: "Choisir ce dossier",
+    cancel: "Annuler", save: "Enregistrer",
+    mapping_error_incomplete: "Merci de renseigner l'identifiant, le chemin HA et le chemin Git.",
+    mapping_confirm_delete: 'Supprimer le mapping « {id} » ?\n\nCela retire uniquement la configuration — aucun fichier n\'est touché.',
+    mapping_error_delete: "Impossible de supprimer : ",
   },
 };
 
@@ -304,6 +458,11 @@ function switchLang() {
 }
 
 const el = (id) => document.getElementById(id);
+
+let mappingsActuels = [];
+let mappingEnEdition = null;
+let browseRacine = null;
+let browseCheminCourant = "";
 
 function badge(texte, classe) {
   const span = document.createElement("span");
@@ -394,6 +553,216 @@ function afficherEtat(donnees) {
 
     tbody.appendChild(tr);
   }
+
+  mappingsActuels = donnees.elements;
+  afficherMappings();
+}
+
+function afficherMappings() {
+  const tbody = el("mapping-rows");
+  tbody.replaceChildren();
+
+  for (const mapping of mappingsActuels) {
+    const tr = document.createElement("tr");
+
+    const idCell = document.createElement("td");
+    const code = document.createElement("code");
+    code.textContent = mapping.id;
+    idCell.appendChild(code);
+    tr.appendChild(idCell);
+
+    const haCell = document.createElement("td");
+    haCell.textContent = mapping.ha_path;
+    tr.appendChild(haCell);
+
+    const gitCell = document.createElement("td");
+    gitCell.textContent = mapping.git_path;
+    tr.appendChild(gitCell);
+
+    const dirCell = document.createElement("td");
+    dirCell.textContent = mapping.direction;
+    tr.appendChild(dirCell);
+
+    const actionCell = document.createElement("td");
+
+    const editBtn = document.createElement("button");
+    editBtn.className = "action-edit";
+    editBtn.textContent = t("mapping_edit");
+    editBtn.addEventListener("click", () => ouvrirModalMapping(mapping));
+    actionCell.appendChild(editBtn);
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "action-delete";
+    delBtn.textContent = t("mapping_delete");
+    delBtn.addEventListener("click", () => supprimerMapping(mapping.id));
+    actionCell.appendChild(delBtn);
+
+    tr.appendChild(actionCell);
+    tbody.appendChild(tr);
+  }
+}
+
+function copierMappingsPourEnvoi() {
+  return mappingsActuels.map((mapping) => ({
+    id: mapping.id, kind: mapping.kind, direction: mapping.direction,
+    ha_path: mapping.ha_path, git_path: mapping.git_path,
+  }));
+}
+
+function ouvrirModalMapping(mapping) {
+  mappingEnEdition = mapping ? mapping.id : null;
+
+  const erreur = el("mapping-error");
+  erreur.style.display = "none";
+
+  el("mapping-modal-title").textContent = mapping ? t("mapping_modal_edit") : t("mapping_modal_add");
+
+  el("mapping-id").value = mapping ? mapping.id : "";
+  el("mapping-id").disabled = !!mapping;
+  el("mapping-kind").value = mapping ? mapping.kind : "file";
+  el("mapping-direction").value = mapping ? mapping.direction : "git_to_ha";
+  el("mapping-ha-path").value = mapping ? mapping.ha_path : "";
+  el("mapping-git-path").value = mapping ? mapping.git_path : "";
+
+  el("mapping-modal").hidden = false;
+}
+
+function fermerModalMapping() {
+  el("mapping-modal").hidden = true;
+}
+
+async function sauvegarderMapping() {
+  const erreur = el("mapping-error");
+  erreur.style.display = "none";
+
+  const id = el("mapping-id").value.trim();
+  const kind = el("mapping-kind").value;
+  const direction = el("mapping-direction").value;
+  const haPath = el("mapping-ha-path").value.trim();
+  const gitPath = el("mapping-git-path").value.trim();
+
+  if (!id || !haPath || !gitPath) {
+    erreur.textContent = t("mapping_error_incomplete");
+    erreur.style.display = "block";
+    return;
+  }
+
+  const nouveauMapping = { id, kind, direction, ha_path: haPath, git_path: gitPath };
+  const listeExistante = copierMappingsPourEnvoi();
+
+  const nouvelleListe = mappingEnEdition
+    ? listeExistante.map((mapping) => (mapping.id === mappingEnEdition ? nouveauMapping : mapping))
+    : [...listeExistante, nouveauMapping];
+
+  const boutonSave = el("mapping-save");
+  boutonSave.disabled = true;
+
+  try {
+    const reponse = await fetch(`${cheminBaseIngress()}api/mappings`, {
+      method: "POST", cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mappings: nouvelleListe }),
+    });
+    const donnees = await reponse.json();
+    if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
+
+    fermerModalMapping();
+    afficherEtat(donnees);
+  } catch (exception) {
+    erreur.textContent = exception.message;
+    erreur.style.display = "block";
+  } finally {
+    boutonSave.disabled = false;
+  }
+}
+
+async function supprimerMapping(id) {
+  if (!window.confirm(t("mapping_confirm_delete").replace("{id}", id))) return;
+
+  const nouvelleListe = copierMappingsPourEnvoi().filter((mapping) => mapping.id !== id);
+  const erreur = el("error");
+
+  try {
+    const reponse = await fetch(`${cheminBaseIngress()}api/mappings`, {
+      method: "POST", cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mappings: nouvelleListe }),
+    });
+    const donnees = await reponse.json();
+    if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
+
+    erreur.style.display = "none";
+    afficherEtat(donnees);
+  } catch (exception) {
+    erreur.textContent = t("mapping_error_delete") + exception.message;
+    erreur.style.display = "block";
+  }
+}
+
+function ouvrirBrowse(racine, cheminActuel) {
+  browseRacine = racine;
+  browseCheminCourant = cheminActuel && cheminActuel.trim()
+    ? cheminActuel.trim()
+    : (racine === "ha" ? "/config" : "");
+
+  el("browse-modal").hidden = false;
+  chargerBrowse();
+}
+
+function fermerBrowse() {
+  el("browse-modal").hidden = true;
+}
+
+async function chargerBrowse() {
+  const erreur = el("browse-error");
+  erreur.style.display = "none";
+  el("browse-list").replaceChildren();
+
+  try {
+    const parametres = new URLSearchParams({ root: browseRacine, path: browseCheminCourant });
+    const reponse = await fetch(`${cheminBaseIngress()}api/browse?${parametres}`, { cache: "no-store" });
+    const donnees = await reponse.json();
+    if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
+
+    browseCheminCourant = donnees.path;
+    el("browse-breadcrumb").textContent = donnees.path || (browseRacine === "git" ? "/" : "/config");
+
+    const liste = el("browse-list");
+
+    if (donnees.parent !== null) {
+      const li = document.createElement("li");
+      li.className = "browse-entry browse-up";
+      li.textContent = "⬆ …";
+      li.addEventListener("click", () => { browseCheminCourant = donnees.parent; chargerBrowse(); });
+      liste.appendChild(li);
+    }
+
+    for (const entree of donnees.entries) {
+      const li = document.createElement("li");
+      li.className = `browse-entry browse-${entree.kind}`;
+      li.textContent = (entree.kind === "directory" ? "📁 " : "📄 ") + entree.name;
+
+      if (entree.kind === "directory") {
+        li.addEventListener("click", () => { browseCheminCourant = entree.path; chargerBrowse(); });
+      } else {
+        li.addEventListener("click", () => selectionnerCheminBrowse(entree.path));
+      }
+
+      liste.appendChild(li);
+    }
+  } catch (exception) {
+    erreur.textContent = exception.message;
+    erreur.style.display = "block";
+  }
+}
+
+function selectionnerCheminBrowse(chemin) {
+  if (browseRacine === "ha") {
+    el("mapping-ha-path").value = chemin;
+  } else {
+    el("mapping-git-path").value = chemin;
+  }
+  fermerBrowse();
 }
 
 async function chargerSetup() {
@@ -515,6 +884,22 @@ el("lang-toggle").addEventListener("click", switchLang);
 el("refresh").addEventListener("click", actualiserGit);
 el("copy-key").addEventListener("click", copierCle);
 
+el("add-mapping").addEventListener("click", () => ouvrirModalMapping(null));
+el("mapping-modal-close").addEventListener("click", fermerModalMapping);
+el("mapping-cancel").addEventListener("click", fermerModalMapping);
+el("mapping-save").addEventListener("click", sauvegarderMapping);
+
+document.querySelectorAll(".browse-btn").forEach((bouton) => {
+  bouton.addEventListener("click", () => {
+    const racine = bouton.getAttribute("data-root");
+    const champ = racine === "ha" ? el("mapping-ha-path") : el("mapping-git-path");
+    ouvrirBrowse(racine, champ.value);
+  });
+});
+
+el("browse-modal-close").addEventListener("click", fermerBrowse);
+el("browse-select-here").addEventListener("click", () => selectionnerCheminBrowse(browseCheminCourant));
+
 applyTranslations();
 chargerEtatSiConfigure();
 setInterval(chargerEtatSiConfigure, 5000);
@@ -618,6 +1003,327 @@ def construire_setup() -> dict:
         "public_key": public_key,
         "config_url": config_url,
     }
+
+
+###############################################################################
+# DIRECTORY BROWSING (read-only)
+#
+# Powers the "Browse" picker in the mapping form: lists the direct
+# children of a directory, always confined to the given root (HA config
+# mount or the local Git clone). Never reads file contents, never
+# follows symlinks, never lists outside its root.
+###############################################################################
+
+def verifier_chemin_resolu(chemin: Path, racine: Path) -> None:
+
+    racine_resolue = racine.resolve()
+    chemin_resolu = chemin.resolve()
+
+    chemin_resolu.relative_to(racine_resolue)
+
+
+def lister_repertoire(racine: Path, sous_chemin_relatif: str) -> dict:
+    """Lists the direct children of `racine / sous_chemin_relatif`.
+
+    `sous_chemin_relatif` must already be a plain relative path (no
+    leading '/', no '..'); the two HTTP-facing prefixes (ha_path's
+    "/config/..." form, git_path's plain relative form) are converted to
+    that shape by the caller before this ever runs.
+    """
+
+    relatif = PurePosixPath(sous_chemin_relatif) if sous_chemin_relatif else PurePosixPath()
+
+    if relatif.is_absolute():
+        raise ValueError("path must be relative")
+
+    if ".." in relatif.parts:
+        raise ValueError("path must not contain '..'")
+
+    cible = racine.joinpath(*relatif.parts) if relatif.parts else racine
+
+    verifier_chemin_resolu(cible, racine)
+
+    if cible.is_symlink():
+        raise ValueError("symlinks are not browsable")
+
+    if not cible.is_dir():
+        raise ValueError("not a directory")
+
+    if not os.access(cible, os.R_OK | os.X_OK):
+        raise ValueError("directory not accessible")
+
+    entrees = []
+
+    with os.scandir(cible) as parcours:
+        for entree in parcours:
+
+            if entree.name.startswith("."):
+                continue
+
+            if entree.name in NOMS_IGNORES_NAVIGATION:
+                continue
+
+            if entree.is_symlink():
+                continue
+
+            chemin_enfant = (relatif / entree.name).as_posix()
+
+            if entree.is_dir(follow_symlinks=False):
+                entrees.append({"name": entree.name, "kind": "directory", "path": chemin_enfant})
+            elif entree.is_file(follow_symlinks=False):
+                entrees.append({"name": entree.name, "kind": "file", "path": chemin_enfant})
+
+    entrees.sort(key=lambda entree: (entree["kind"] != "directory", entree["name"].lower()))
+
+    if relatif.parts:
+        parent = relatif.parent.as_posix()
+        parent = "" if parent == "." else parent
+    else:
+        parent = None
+
+    return {
+        "path": relatif.as_posix() if relatif.parts else "",
+        "parent": parent,
+        "entries": entrees,
+    }
+
+
+def ha_path_vers_relatif(ha_path: str) -> str:
+    """Converts a "/config/..." style path (the shape stored in a
+    mapping's ha_path) to a plain path relative to HA_ROOT."""
+
+    chemin = (ha_path or "").strip().lstrip("/")
+
+    if chemin == "config":
+        return ""
+
+    if chemin.startswith("config/"):
+        return chemin[len("config/"):]
+
+    return chemin
+
+
+def relatif_vers_ha_path(relatif: str) -> str:
+    return f"/config/{relatif}" if relatif else "/config"
+
+
+def gerer_browse(handler: "InterfaceHandler") -> None:
+
+    requete = urllib.parse.urlsplit(handler.path)
+    parametres = urllib.parse.parse_qs(requete.query)
+
+    racine_nom = (parametres.get("root") or [""])[0]
+    chemin_brut = (parametres.get("path") or [""])[0]
+
+    if racine_nom == "ha":
+        racine = HA_ROOT
+        chemin_relatif = ha_path_vers_relatif(chemin_brut)
+    elif racine_nom == "git":
+        racine = GIT_ROOT
+        chemin_relatif = (chemin_brut or "").strip().lstrip("/")
+    else:
+        handler.repondre_json(400, {"ok": False, "error": "invalid root (expected 'ha' or 'git')"})
+        return
+
+    try:
+        resultat = lister_repertoire(racine, chemin_relatif)
+    except (ValueError, OSError) as exc:
+        handler.repondre_json(400, {"ok": False, "error": str(exc)})
+        return
+
+    def formater(relatif: str) -> str:
+        return relatif_vers_ha_path(relatif) if racine_nom == "ha" else relatif
+
+    handler.repondre_json(200, {
+        "ok": True,
+        "root": racine_nom,
+        "path": formater(resultat["path"]),
+        "parent": None if resultat["parent"] is None else formater(resultat["parent"]),
+        "entries": [
+            {**entree, "path": formater(entree["path"])}
+            for entree in resultat["entries"]
+        ],
+    })
+
+
+###############################################################################
+# MAPPINGS: WRITE
+#
+# The one place this add-on writes to its own configuration. Until now,
+# interface.py only ever read /data/options.json — the user edited it
+# exclusively through Home Assistant's native Configuration tab, and
+# Supervisor wrote it. This adds a second, additional way to manage
+# mappings (a picker inside our own page); the native tab keeps working
+# exactly as before, nothing is removed.
+#
+# Security:
+#   - every submitted mapping is re-validated with the engine's own
+#     rules (gestionnaire.py's ID_PATTERN, ALLOWED_KINDS,
+#     IMPLEMENTED_DIRECTIONS, convertir_chemin_ha/git,
+#     verifier_chemin_resolu, est_chemin_protege) — nothing is accepted
+#     here that the engine itself would refuse to load or deploy;
+#   - the Supervisor call this uses (POST /addons/self/options) is
+#     scoped to "self": it can only ever change this add-on's own
+#     configuration, never another add-on's or Home Assistant's;
+#   - the full current options object is sent back with only `mappings`
+#     replaced — the Supervisor API validates everything against
+#     config.yaml's schema in one pass, so a partial payload would not
+#     be reliable.
+###############################################################################
+
+MAPPINGS_PAYLOAD_MAX_BYTES = 262144  # 256 KiB: generous, but bounded
+
+
+def valider_mappings_proposes(module, mappings_proposes: list) -> list:
+    """Re-validates a candidate mappings list with the engine's own
+    rules before it is ever persisted. Raises ValueError (safe to show
+    to the user) on the first problem found."""
+
+    ids_vus: set[str] = set()
+    resultat = []
+
+    for entree in mappings_proposes:
+
+        if not isinstance(entree, dict):
+            raise ValueError("a mapping entry must be an object")
+
+        element_id = entree.get("id")
+
+        if not isinstance(element_id, str) or not module.ID_PATTERN.fullmatch(element_id or ""):
+            raise ValueError(f"invalid id: {element_id!r}")
+
+        if element_id in ids_vus:
+            raise ValueError(f"duplicate id: {element_id}")
+
+        ids_vus.add(element_id)
+
+        kind = entree.get("kind") or "file"
+
+        if kind not in module.ALLOWED_KINDS:
+            raise ValueError(f"{element_id}: invalid kind: {kind}")
+
+        direction = entree.get("direction")
+
+        if direction not in module.IMPLEMENTED_DIRECTIONS:
+            raise ValueError(
+                f"{element_id}: direction '{direction}' is not supported yet "
+                "(only git_to_ha is implemented) — this would stop the "
+                "engine from starting at all if saved"
+            )
+
+        ha_path = entree.get("ha_path")
+        git_path = entree.get("git_path")
+
+        if not isinstance(ha_path, str) or not ha_path.strip():
+            raise ValueError(f"{element_id}: invalid ha_path")
+
+        if not isinstance(git_path, str) or not git_path.strip():
+            raise ValueError(f"{element_id}: invalid git_path")
+
+        chemin_ha = module.convertir_chemin_ha(ha_path)
+        module.verifier_chemin_resolu(chemin_ha, module.HA_ROOT, "/homeassistant")
+
+        chemin_git = module.convertir_chemin_git(git_path)
+        module.verifier_chemin_resolu(chemin_git, module.GIT_ROOT, "/data/repository")
+
+        if kind == "file" and module.est_chemin_protege(chemin_ha):
+            raise ValueError(
+                f"{element_id}: this is a core Home Assistant config file "
+                "and can never be managed by a mapping"
+            )
+
+        resultat.append({
+            "id": element_id,
+            "kind": kind,
+            "ha_path": ha_path.strip(),
+            "git_path": git_path.strip(),
+            "direction": direction,
+        })
+
+    return resultat
+
+
+def ecrire_options_supervisor(champs: dict) -> tuple[bool, str | None]:
+    """Writes to this add-on's own Supervisor-tracked options."""
+
+    token = os.environ.get("SUPERVISOR_TOKEN")
+
+    if not token:
+        return False, "SUPERVISOR_TOKEN not available"
+
+    options_actuelles = lire_options()
+    nouvelles_options = {**options_actuelles, **champs}
+
+    corps = json.dumps({"options": nouvelles_options}).encode("utf-8")
+
+    requete = urllib.request.Request(
+        f"{SUPERVISOR_API}/addons/self/options",
+        data=corps,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(requete, timeout=10) as reponse:
+            reponse.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace").strip()
+        return False, f"Supervisor refused the options update: {exc.code} {detail}".strip()
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return False, f"cannot reach Supervisor: {exc}"
+
+    return True, None
+
+
+def gerer_sauvegarde_mappings(handler: "InterfaceHandler") -> None:
+
+    longueur = int(handler.headers.get("Content-Length", 0) or 0)
+
+    if longueur > MAPPINGS_PAYLOAD_MAX_BYTES:
+        handler.repondre_json(413, {"ok": False, "error": "payload too large"})
+        return
+
+    corps_requete = handler.rfile.read(longueur) if longueur > 0 else b"{}"
+
+    try:
+        charge = json.loads(corps_requete)
+    except json.JSONDecodeError:
+        handler.repondre_json(400, {"ok": False, "error": "invalid JSON"})
+        return
+
+    if not isinstance(charge, dict) or not isinstance(charge.get("mappings"), list):
+        handler.repondre_json(400, {"ok": False, "error": "expected {\"mappings\": [...]}"})
+        return
+
+    module, erreur_chargement = charger_gestionnaire()
+
+    if module is None:
+        handler.repondre_json(503, {"ok": False, "error": erreur_chargement})
+        return
+
+    try:
+        mappings_valides = valider_mappings_proposes(module, charge["mappings"])
+    except ValueError as exc:
+        handler.repondre_json(400, {"ok": False, "error": str(exc)})
+        return
+
+    succes, erreur_ecriture = ecrire_options_supervisor({"mappings": mappings_valides})
+
+    if not succes:
+        handler.repondre_json(502, {"ok": False, "error": erreur_ecriture})
+        return
+
+    print(
+        f"[homelab-git-management] [interface] mappings updated via UI "
+        f"({len(mappings_valides)} entries)",
+        flush=True,
+    )
+
+    donnees = construire_etat()
+    handler.repondre_json(200 if donnees.get("ok") else 503, donnees)
 
 
 ###############################################################################
@@ -806,6 +1512,8 @@ def construire_etat() -> dict:
                 "state": etat,
                 "protected": protege,
                 "deployable_now": deployable_now,
+                "ha_path": element["ha_path"],
+                "git_path": element["git_path"],
             }
         )
 
@@ -831,7 +1539,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/0.1.4"
+    server_version = "HomelabGitManagement/0.2.0"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 
@@ -859,6 +1567,10 @@ class InterfaceHandler(BaseHTTPRequestHandler):
         if chemin.endswith("/api/status"):
             donnees = construire_etat()
             self.repondre_json(200 if donnees.get("ok") else 503, donnees)
+            return
+
+        if chemin.endswith("/api/browse"):
+            gerer_browse(self)
             return
 
         if chemin.endswith("/health"):
@@ -906,6 +1618,10 @@ class InterfaceHandler(BaseHTTPRequestHandler):
 
             donnees = construire_etat()
             self.repondre_json(200 if donnees.get("ok") else 503, donnees)
+            return
+
+        if chemin.endswith("/api/mappings"):
+            gerer_sauvegarde_mappings(self)
             return
 
         self.repondre_json(405, {"error": "unknown endpoint"})
