@@ -173,6 +173,13 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
 .browse-entry:last-child { border-bottom: 0; }
 .browse-entry:hover { background: var(--surface-soft); }
 .browse-up { color: var(--muted); font-weight: 600; }
+.restart-overlay { position: fixed; inset: 0; background: rgba(255,255,255,0.94); z-index: 100;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+  text-align: center; padding: 24px; }
+.restart-overlay p { margin: 0; color: var(--text); font-size: 14px; max-width: 320px; }
+.spinner { width: 38px; height: 38px; border: 4px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -355,6 +362,11 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
   </div>
 </div>
 
+<div id="restart-overlay" class="restart-overlay" hidden>
+  <div class="spinner"></div>
+  <p data-i18n="restart_overlay_text">Applying your change — the add-on is restarting…</p>
+</div>
+
 <script>
 const STRINGS = {
   en: {
@@ -409,6 +421,8 @@ const STRINGS = {
     mapping_error_incomplete: "Please fill in the identifier, the HA path and the Git path.",
     mapping_confirm_delete: 'Delete mapping "{id}"?\n\nThis only removes it from the configuration — no file is touched.',
     mapping_error_delete: "Could not delete: ",
+    restart_overlay_text: "Applying your change — the add-on is restarting…",
+    restart_overlay_timeout: "This is taking longer than expected. Try reloading this page in a moment.",
   },
   fr: {
     title: "Homelab Git Management",
@@ -462,6 +476,8 @@ const STRINGS = {
     mapping_error_incomplete: "Merci de renseigner l'identifiant, le chemin HA et le chemin Git.",
     mapping_confirm_delete: 'Supprimer le mapping « {id} » ?\n\nCela retire uniquement la configuration — aucun fichier n\'est touché.',
     mapping_error_delete: "Impossible de supprimer : ",
+    restart_overlay_text: "Application du changement — l'add-on redémarre…",
+    restart_overlay_timeout: "C'est plus long que prévu. Essaie de recharger cette page dans un instant.",
   },
 };
 
@@ -662,6 +678,37 @@ function fermerModalMapping() {
   el("mapping-modal").hidden = true;
 }
 
+async function attendreRedemarrage() {
+  el("restart-overlay").hidden = false;
+
+  // Give the container a moment to actually go down first, so an early
+  // poll doesn't just hit the still-shutting-down process and report
+  // "back" prematurely.
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+
+  let revenu = false;
+
+  for (let tentative = 0; tentative < 40; tentative++) {
+    try {
+      const reponse = await fetch(`${cheminBaseIngress()}api/setup`, { cache: "no-store" });
+      if (reponse.ok) { revenu = true; break; }
+    } catch (exception) {
+      // Expected while the container is restarting — keep polling.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+
+  const overlayTexte = el("restart-overlay").querySelector("p");
+
+  if (!revenu) {
+    overlayTexte.textContent = t("restart_overlay_timeout");
+    return;
+  }
+
+  el("restart-overlay").hidden = true;
+  chargerEtatSiConfigure();
+}
+
 async function sauvegarderMapping() {
   const erreur = el("mapping-error");
   erreur.style.display = "none";
@@ -698,7 +745,12 @@ async function sauvegarderMapping() {
     if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
 
     fermerModalMapping();
-    afficherEtat(donnees);
+
+    if (donnees.restarting) {
+      attendreRedemarrage();
+    } else {
+      afficherEtat(donnees);
+    }
   } catch (exception) {
     erreur.textContent = exception.message;
     erreur.style.display = "block";
@@ -723,7 +775,12 @@ async function supprimerMapping(id) {
     if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
 
     erreur.style.display = "none";
-    afficherEtat(donnees);
+
+    if (donnees.restarting) {
+      attendreRedemarrage();
+    } else {
+      afficherEtat(donnees);
+    }
   } catch (exception) {
     erreur.textContent = t("mapping_error_delete") + exception.message;
     erreur.style.display = "block";
@@ -1362,6 +1419,35 @@ def ecrire_options_supervisor(champs: dict) -> tuple[bool, str | None]:
     return True, None
 
 
+def redemarrer_soi_meme() -> None:
+    """Restarts this add-on via the Supervisor API, scoped to "self" just
+    like the options write above — it can only ever restart this add-on,
+    never another one. Used only as a fallback when a saved mapping isn't
+    visible yet: a manual restart from the Info tab was observed during
+    testing to reliably make it appear, so this automates exactly that
+    instead of leaving the user to do it by hand. Best-effort: any
+    failure here is silent, since the caller has already told the
+    browser a restart is starting and the browser's own retry loop is
+    what actually determines when the add-on is back."""
+
+    token = os.environ.get("SUPERVISOR_TOKEN")
+
+    if not token:
+        return
+
+    requete = urllib.request.Request(
+        f"{SUPERVISOR_API}/addons/self/restart",
+        data=b"",
+        method="POST",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    try:
+        urllib.request.urlopen(requete, timeout=10)
+    except (urllib.error.URLError, TimeoutError, OSError):
+        pass
+
+
 def mappings_correspondent(actuels: object, attendus: list) -> bool:
     """Structural comparison used only to detect whether the just-written
     mappings have become visible yet — not a validation function."""
@@ -1378,13 +1464,15 @@ def mappings_correspondent(actuels: object, attendus: list) -> bool:
     return normaliser(actuels) == normaliser(attendus)
 
 
-def attendre_options_persistees(mappings_attendus: list, delai_max: float = 12.0) -> bool:
-    """Supervisor's POST /addons/self/options can return success before
-    the on-disk options.json this add-on reads is actually updated —
-    observed during end-to-end testing: a save was accepted (200) but
-    the very next read still showed the previous mappings. Poll briefly
-    for the change to become visible rather than trusting one immediate
-    re-read."""
+def attendre_options_persistees(mappings_attendus: list, delai_max: float = 3.0) -> bool:
+    """Best-effort only: Supervisor's POST /addons/self/options can return
+    success before the on-disk options.json this add-on reads is actually
+    updated — observed during end-to-end testing, anywhere from under a
+    second to (rarely) not until the add-on is restarted. This makes the
+    common case feel instant by waiting briefly, but the caller must never
+    treat a timeout here as a failure: Supervisor's own success response
+    is the real confirmation, and the regular 5-second status poll picks
+    up the change on its own once it lands, with no action needed."""
 
     intervalle = 0.25
     ecoule = 0.0
@@ -1436,31 +1524,33 @@ def gerer_sauvegarde_mappings(handler: "InterfaceHandler") -> None:
         handler.repondre_json(502, {"ok": False, "error": erreur_ecriture})
         return
 
-    if not attendre_options_persistees(mappings_valides):
+    if attendre_options_persistees(mappings_valides, delai_max=1.5):
+
         print(
-            "[homelab-git-management] [interface] WARNING: Supervisor accepted "
-            "the mappings update but it was not visible on disk within the "
-            "timeout",
+            f"[homelab-git-management] [interface] mappings updated via UI "
+            f"({len(mappings_valides)} entries)",
             flush=True,
         )
-        handler.repondre_json(504, {
-            "ok": False,
-            "error": (
-                "Supervisor confirmed the save, but the new configuration did "
-                "not become visible in time. Wait a few seconds, then click "
-                "Refresh — the change is very likely applied anyway."
-            ),
-        })
+
+        donnees = construire_etat()
+        handler.repondre_json(200 if donnees.get("ok") else 503, donnees)
         return
 
+    # Not visible yet through the fast path. Testing showed a plain
+    # restart reliably makes a just-saved mapping appear (Supervisor's
+    # write to options.json can apparently lag until the add-on is
+    # restarted), so this automates exactly that instead of leaving the
+    # user to do it by hand from the Info tab. The response is sent
+    # *before* triggering the restart so the browser gets a clean
+    # "restarting" signal first; the browser then polls on its own
+    # until the add-on answers again.
     print(
-        f"[homelab-git-management] [interface] mappings updated via UI "
-        f"({len(mappings_valides)} entries)",
+        "[homelab-git-management] [interface] mappings accepted by Supervisor "
+        "but not yet visible; restarting to apply them",
         flush=True,
     )
-
-    donnees = construire_etat()
-    handler.repondre_json(200 if donnees.get("ok") else 503, donnees)
+    handler.repondre_json(200, {"ok": True, "restarting": True})
+    redemarrer_soi_meme()
 
 
 ###############################################################################
@@ -1676,7 +1766,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/0.2.2"
+    server_version = "HomelabGitManagement/0.2.4"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 

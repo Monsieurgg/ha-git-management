@@ -2,6 +2,17 @@
 
 All notable changes to this add-on are documented here.
 
+## 0.2.4
+
+- Real-world testing showed the local options.json this add-on reads
+  can lag well past a few seconds after Supervisor accepts a mapping
+  save — a manual restart from the Info tab reliably fixed it. This is
+  now automatic: if a save isn't visible within ~1.5 seconds, the
+  add-on restarts itself (the same "self"-scoped Supervisor API used
+  for the options write, so it can only ever restart this add-on) and
+  the dashboard shows a brief spinner overlay while it comes back, then
+  refreshes on its own — no manual restart needed anymore.
+
 ## 0.2.3
 
 - Fixed a UX regression introduced in 0.2.1/0.2.2: a mapping save that

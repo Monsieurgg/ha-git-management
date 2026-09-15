@@ -56,6 +56,14 @@ itself enforces (identifier format, allowed `kind`, implemented
 `direction`, path containment, the four protected core files below)
 before it is ever saved.
 
+If a saved mapping isn't visible within about 1.5 seconds (Supervisor's
+options write can lag before this add-on's own copy catches up), the
+add-on restarts itself automatically to pick it up cleanly, the same
+effect as a manual restart from the Info tab — the dashboard shows a
+brief "restarting" overlay and recovers on its own. This uses the same
+"self"-scoped Supervisor API (`/addons/self/restart`): it can only ever
+restart this add-on, never another one or Home Assistant itself.
+
 ## Comparison states
 
 - **identical** — byte-for-byte equal.
