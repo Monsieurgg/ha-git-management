@@ -2,6 +2,14 @@
 
 All notable changes to this add-on are documented here.
 
+## 0.1.2
+
+- The first-time setup screen now shows an "Open the Configuration tab"
+  link (only while no repository is configured), pointing to this
+  add-on's own native Configuration page. The link is built from a
+  read-only Supervisor API lookup of the add-on's own slug — no new
+  write capability, nothing else changes.
+
 ## 0.1.1
 
 - First-time setup screen rewritten as four numbered steps instead of a

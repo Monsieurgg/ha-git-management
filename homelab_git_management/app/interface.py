@@ -38,6 +38,8 @@ import json
 import os
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 
 
 ###############################################################################
@@ -52,6 +54,8 @@ APP_VERSION = os.environ.get("APP_VERSION", "unknown")
 GIT_ROOT = Path("/data/repository")
 OPTIONS_PATH = Path("/data/options.json")
 SSH_PUBLIC_KEY = Path("/data/ssh/github_deploy_key.pub")
+
+SUPERVISOR_API = "http://supervisor"
 
 
 ###############################################################################
@@ -111,6 +115,9 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
 .key-row button { flex-shrink: 0; white-space: nowrap; }
 .setup-steps { margin: 0 0 18px; padding-left: 22px; }
 .setup-steps li { margin-bottom: 10px; line-height: 1.5; }
+.config-link { display: inline-block; margin-top: 14px; padding: 10px 15px; border: 1px solid var(--accent);
+  border-radius: 10px; color: var(--accent); text-decoration: none; font-weight: 600; font-size: 13px; }
+.config-link:hover { background: var(--info-bg); }
 .field-row { margin: 10px 0; font-size: 13px; }
 .field-row .label { color: var(--muted); margin-right: 6px; }
 .badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 8px; white-space: nowrap; font-size: 11px; font-weight: 700; }
@@ -164,6 +171,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
       </div>
       <div class="field-row"><span class="label" data-i18n="setup_repo_label">Configured repository</span><span id="setup-repo">—</span></div>
       <div class="field-row"><span class="label" data-i18n="setup_branch_label">Configured branch</span><span id="setup-branch">—</span></div>
+      <a id="setup-config-link" class="config-link" target="_top" hidden data-i18n="setup_open_config">Open the Configuration tab</a>
     </div>
   </div>
 
@@ -261,6 +269,7 @@ const STRINGS = {
     setup_branch_label: "Configured branch:",
     setup_none: "not set",
     copy_key: "Copy", copied_key: "Copied!",
+    setup_open_config: "Open the Configuration tab →",
   },
   fr: {
     title: "Homelab Git Management",
@@ -296,6 +305,7 @@ const STRINGS = {
     setup_branch_label: "Branche configurée :",
     copy_key: "Copier", copied_key: "Copié !",
     setup_none: "non défini",
+    setup_open_config: "Ouvrir l'onglet Configuration →",
   },
 };
 
@@ -432,6 +442,15 @@ async function chargerEtatSiConfigure() {
       el("setup-key").textContent = setup.public_key || "—";
       el("setup-repo").textContent = setup.github_repository || t("setup_none");
       el("setup-branch").textContent = setup.github_branch || t("setup_none");
+
+      const lienConfig = el("setup-config-link");
+      if (setup.config_url) {
+        lienConfig.href = setup.config_url;
+        lienConfig.hidden = false;
+      } else {
+        lienConfig.hidden = true;
+      }
+
       return;
     }
 
@@ -548,6 +567,56 @@ def lire_options() -> dict:
         return {}
 
 
+# Cached after the first successful lookup: the add-on's own slug never
+# changes during the container's lifetime, and this must not be re-fetched
+# from Supervisor on every 5-second setup poll.
+_slug_propre_cache: str | None = None
+_slug_propre_echec = False
+
+
+def obtenir_slug_propre() -> str | None:
+    """Read-only lookup of this add-on's own Supervisor slug (includes the
+    repository hash prefix, e.g. "08626b84_homelab_git_management"), used
+    only to build a convenience link to the native Configuration tab. Never
+    writes anything; any failure just means the link is not shown."""
+
+    global _slug_propre_cache, _slug_propre_echec
+
+    if _slug_propre_cache is not None:
+        return _slug_propre_cache
+
+    if _slug_propre_echec:
+        return None
+
+    token = os.environ.get("SUPERVISOR_TOKEN")
+
+    if not token:
+        _slug_propre_echec = True
+        return None
+
+    requete = urllib.request.Request(
+        f"{SUPERVISOR_API}/addons/self/info",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    try:
+        with urllib.request.urlopen(requete, timeout=5) as reponse:
+            donnees = json.loads(reponse.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        _slug_propre_echec = True
+        return None
+
+    slug = donnees.get("data", {}).get("slug") if isinstance(donnees, dict) else None
+
+    if not isinstance(slug, str) or not slug:
+        _slug_propre_echec = True
+        return None
+
+    _slug_propre_cache = slug
+
+    return slug
+
+
 def construire_setup() -> dict:
 
     options = lire_options()
@@ -561,12 +630,22 @@ def construire_setup() -> dict:
         except Exception:
             public_key = None
 
+    config_url = None
+
+    if not repo:
+
+        slug = obtenir_slug_propre()
+
+        if slug:
+            config_url = f"/config/app/{slug}/config"
+
     return {
         "ok": True,
         "configured": bool(repo),
         "github_repository": repo,
         "github_branch": options.get("github_branch") or "main",
         "public_key": public_key,
+        "config_url": config_url,
     }
 
 
@@ -774,7 +853,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/0.1.1"
+    server_version = "HomelabGitManagement/0.1.2"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 
