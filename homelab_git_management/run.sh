@@ -33,7 +33,7 @@
 
 set -e
 
-APP_VERSION="0.1.4"
+APP_VERSION="0.2.0"
 
 export APP_VERSION
 

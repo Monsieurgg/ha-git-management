@@ -32,6 +32,30 @@ Each entry under `mappings`:
 | `git_path` | string | Path relative to the repository root. |
 | `direction` | `git_to_ha` \| `ha_to_git` \| `bidirectional` | Only `git_to_ha` is implemented; the other two are accepted by validation but make the add-on refuse to start, with an explicit error naming the offending mapping. |
 
+## Managing mappings from the dashboard
+
+Mappings can be created, edited and deleted directly from the Ingress
+dashboard ("Configured mappings" panel), with a directory/file browser for
+both the Home Assistant side and the Git side — no need to type raw paths
+by hand. The native Configuration tab (Settings → Add-ons → Homelab Git
+Management → Configuration) still works exactly as before; the dashboard
+is an additional, optional way to manage the same list.
+
+The directory browser only ever lists directories: it reads the Home
+Assistant config mount and the local Git clone, never their content, and
+never anything outside them. Dotfiles/dotdirs (`.storage`, `.git`, ...)
+are hidden.
+
+**Security note:** this is the one feature where the add-on writes its own
+configuration, instead of only reading it. It does so through Home
+Assistant Supervisor's own API, scoped to `/addons/self/options` — by
+construction, this can only ever change this add-on's own configuration,
+never another add-on's or Home Assistant's own files. Every mapping
+submitted this way is re-validated with the exact same rules the engine
+itself enforces (identifier format, allowed `kind`, implemented
+`direction`, path containment, the four protected core files below)
+before it is ever saved.
+
 ## Comparison states
 
 - **identical** — byte-for-byte equal.

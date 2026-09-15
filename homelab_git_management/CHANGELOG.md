@@ -2,6 +2,25 @@
 
 All notable changes to this add-on are documented here.
 
+## 0.2.0
+
+- New: mappings can now be created, edited and deleted directly from the
+  Ingress dashboard, with a built-in directory/file browser for both
+  the Home Assistant side and the Git side — no more typing raw paths
+  by hand in the native Configuration tab (which remains fully usable
+  as before, nothing is removed there).
+- The browser lists real directories, read-only, confined to the
+  Home Assistant config mount and the local Git clone respectively;
+  dotfiles/dotdirs (e.g. `.storage`, `.git`) are hidden by default.
+- Every mapping submitted through the new dashboard form is re-validated
+  with the exact same rules the engine itself enforces (identifier
+  format, allowed kind, implemented direction, path containment, the
+  four protected core Home Assistant files) before it is ever saved —
+  nothing is accepted here that the engine would refuse to load.
+- This is the first feature where the add-on writes its own
+  configuration (via the Supervisor API, scoped to itself only) instead
+  of only reading it; see DOCS.md for the security notes.
+
 ## 0.1.4
 
 - Fixed a real gap found during end-to-end testing: the engine's
