@@ -2,6 +2,14 @@
 
 All notable changes to this add-on are documented here.
 
+## 0.2.2
+
+- Raised the wait for a mapping save to become visible from 4 to 12
+  seconds: real-world testing showed Supervisor's options write can
+  take longer than 4 seconds to land, which was surfacing the
+  "not visible in time" message for saves that actually succeeded a
+  moment later anyway.
+
 ## 0.2.1
 
 - Fixed a real bug found during testing: saving a mapping from the
