@@ -108,6 +108,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 .panel { overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); margin-bottom: 18px; }
 .panel-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 15px 17px; border-bottom: 1px solid var(--border); }
 .panel-header h2 { margin: 0; font-size: 17px; }
+.panel-header-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .panel-body { padding: 17px; }
 .status-line { color: var(--muted); font-size: 12px; text-align: right; }
 .table-wrapper { overflow-x: auto; }
@@ -254,30 +255,11 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
 
     <div class="panel">
       <div class="panel-header">
-        <h2 data-i18n="table_title">Managed elements status</h2>
-        <div id="status-line" class="status-line" data-i18n="loading">Loading…</div>
-      </div>
-      <div class="table-wrapper">
-        <table>
-          <thead>
-            <tr>
-              <th data-i18n="th_element">Element</th>
-              <th data-i18n="th_kind">Type</th>
-              <th data-i18n="th_direction">Direction</th>
-              <th data-i18n="th_comparison">Comparison</th>
-              <th data-i18n="th_protection">Protection</th>
-              <th data-i18n="th_action">Action</th>
-            </tr>
-          </thead>
-          <tbody id="rows"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="panel">
-      <div class="panel-header">
-        <h2 data-i18n="mappings_title">Configured mappings</h2>
-        <button id="add-mapping" type="button" data-i18n="mappings_add">+ Add a mapping</button>
+        <h2 data-i18n="table_title">Managed elements</h2>
+        <div class="panel-header-actions">
+          <div id="status-line" class="status-line" data-i18n="loading">Loading…</div>
+          <button id="add-mapping" type="button" data-i18n="mappings_add">+ Add a mapping</button>
+        </div>
       </div>
       <div class="table-wrapper">
         <table>
@@ -286,11 +268,11 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
               <th data-i18n="th_element">Element</th>
               <th data-i18n="th_ha_path">HA path</th>
               <th data-i18n="th_git_path">Git path</th>
-              <th data-i18n="th_direction">Direction</th>
+              <th data-i18n="th_comparison">Comparison</th>
               <th data-i18n="th_manage">Manage</th>
             </tr>
           </thead>
-          <tbody id="mapping-rows"></tbody>
+          <tbody id="rows"></tbody>
         </table>
       </div>
     </div>
@@ -379,16 +361,14 @@ const STRINGS = {
     card_identical: "Identical", card_identical_meta: "strict equality",
     card_different: "Different", card_different_meta: "actual content",
     card_candidates: "To deploy", card_candidates_meta: "allowed candidates",
-    table_title: "Managed elements status", loading: "Loading…",
-    th_element: "Element", th_kind: "Type", th_direction: "Direction",
-    th_comparison: "Comparison", th_protection: "Protection", th_action: "Action",
+    table_title: "Managed elements", loading: "Loading…",
+    th_element: "Element", th_comparison: "Comparison",
     state_identical: "IDENTICAL", state_equivalent: "EQUIVALENT", state_different: "DIFFERENT",
     state_missing_ha: "MISSING ON HA", state_missing_git: "MISSING IN GIT",
     state_missing_both: "MISSING FROM BOTH", state_error: "ERROR", state_unknown: "UNKNOWN",
-    dir_forbidden: "FORBIDDEN", dir_candidate: "CANDIDATE", dir_after_confirmation: "CONFIGURED",
-    protected: "PROTECTED", standard: "STANDARD",
-    action_required: "DEPLOYMENT REQUIRED", action_deploy: "Deploy",
-    action_none: "NONE", action_blocked: "BLOCKED",
+    dir_forbidden: "FORBIDDEN",
+    protected: "PROTECTED",
+    action_deploy: "Deploy",
     error_load: "Could not load status: ", error_refresh: "Git refresh failed: ",
     error_deploy: "Deployment failed: ",
     deploying: "Deploying...",
@@ -404,7 +384,6 @@ const STRINGS = {
     setup_none: "not set",
     copy_key: "Copy", copied_key: "Copied!",
     setup_open_config: "Open the Configuration tab →",
-    mappings_title: "Configured mappings",
     mappings_add: "+ Add a mapping",
     th_ha_path: "HA path", th_git_path: "Git path", th_manage: "Manage",
     mapping_edit: "Edit", mapping_delete: "Delete",
@@ -434,16 +413,14 @@ const STRINGS = {
     card_identical: "Identiques", card_identical_meta: "égalité stricte",
     card_different: "Différents", card_different_meta: "contenu réel",
     card_candidates: "À déployer", card_candidates_meta: "candidats autorisés",
-    table_title: "État des éléments gérés", loading: "Chargement…",
-    th_element: "Élément", th_kind: "Type", th_direction: "Direction",
-    th_comparison: "Comparaison", th_protection: "Protection", th_action: "Action",
+    table_title: "Éléments gérés", loading: "Chargement…",
+    th_element: "Élément", th_comparison: "Comparaison",
     state_identical: "IDENTIQUE", state_equivalent: "ÉQUIVALENT", state_different: "DIFFÉRENT",
     state_missing_ha: "ABSENT HA", state_missing_git: "ABSENT GIT",
     state_missing_both: "ABSENT DES DEUX", state_error: "ERREUR", state_unknown: "INCONNU",
-    dir_forbidden: "INTERDIT", dir_candidate: "CANDIDAT", dir_after_confirmation: "CONFIGURÉ",
-    protected: "PROTÉGÉ", standard: "STANDARD",
-    action_required: "DÉPLOIEMENT REQUIS", action_deploy: "Déployer",
-    action_none: "AUCUNE", action_blocked: "BLOQUÉE",
+    dir_forbidden: "INTERDIT",
+    protected: "PROTÉGÉ",
+    action_deploy: "Déployer",
     error_load: "Impossible de charger l'état : ", error_refresh: "Échec de l'actualisation Git : ",
     error_deploy: "Échec du déploiement : ",
     deploying: "Déploiement...",
@@ -459,7 +436,6 @@ const STRINGS = {
     copy_key: "Copier", copied_key: "Copié !",
     setup_none: "non défini",
     setup_open_config: "Ouvrir l'onglet Configuration →",
-    mappings_title: "Mappings configurés",
     mappings_add: "+ Ajouter un mapping",
     th_ha_path: "Chemin HA", th_git_path: "Chemin Git", th_manage: "Gérer",
     mapping_edit: "Modifier", mapping_delete: "Supprimer",
@@ -532,12 +508,6 @@ function badgeEtat(etat) {
   return badge(label, cls);
 }
 
-function badgeDirection(fichier) {
-  if (fichier.direction !== "git_to_ha") return badge(t("dir_forbidden"), "blocked");
-  if (fichier.deployable_now) return badge(t("dir_candidate"), "candidate");
-  return badge(t("dir_after_confirmation"), "neutral");
-}
-
 function cheminBaseIngress() {
   return window.location.pathname.endsWith("/") ? window.location.pathname : `${window.location.pathname}/`;
 }
@@ -560,93 +530,63 @@ function afficherEtat(donnees) {
     const tr = document.createElement("tr");
 
     const idCell = document.createElement("td");
+    const icone = document.createElement("span");
+    icone.textContent = fichier.kind === "directory" ? "📁 " : "📄 ";
+    idCell.appendChild(icone);
     const code = document.createElement("code");
     code.textContent = fichier.id;
     idCell.appendChild(code);
     tr.appendChild(idCell);
 
-    for (const value of [fichier.kind]) {
-      const td = document.createElement("td");
-      td.textContent = value ?? "—";
-      tr.appendChild(td);
-    }
+    const haCell = document.createElement("td");
+    haCell.textContent = fichier.ha_path;
+    tr.appendChild(haCell);
 
-    const dirCell = document.createElement("td");
-    dirCell.textContent = fichier.direction;
-    tr.appendChild(dirCell);
+    const gitCell = document.createElement("td");
+    gitCell.textContent = fichier.git_path;
+    tr.appendChild(gitCell);
 
     const cmpCell = document.createElement("td");
     cmpCell.appendChild(badgeEtat(fichier.state));
+    if (fichier.protected) {
+      const verrou = document.createElement("span");
+      verrou.textContent = " 🔒";
+      verrou.title = t("protected");
+      cmpCell.appendChild(verrou);
+    }
+    if (fichier.direction !== "git_to_ha") {
+      cmpCell.appendChild(badge(t("dir_forbidden"), "blocked"));
+    }
     tr.appendChild(cmpCell);
 
-    const protCell = document.createElement("td");
-    protCell.appendChild(fichier.protected ? badge(t("protected"), "blocked") : badge(t("standard"), "neutral"));
-    tr.appendChild(protCell);
+    const gererCell = document.createElement("td");
 
-    const actionCell = document.createElement("td");
     if (fichier.deployable_now) {
-      actionCell.appendChild(badge(t("action_required"), "candidate"));
-      const btn = document.createElement("button");
-      btn.className = "action-deploy";
-      btn.textContent = t("action_deploy");
-      btn.addEventListener("click", () => deployerElement(fichier.id, btn));
-      actionCell.appendChild(btn);
-    } else if (["identical", "equivalent"].includes(fichier.state)) {
-      actionCell.appendChild(badge(t("action_none"), "identical"));
-    } else {
-      actionCell.appendChild(badge(t("action_blocked"), "neutral"));
+      const deployBtn = document.createElement("button");
+      deployBtn.className = "action-deploy";
+      deployBtn.textContent = t("action_deploy");
+      deployBtn.addEventListener("click", () => deployerElement(fichier.id, deployBtn));
+      gererCell.appendChild(deployBtn);
     }
-    tr.appendChild(actionCell);
+
+    const editBtn = document.createElement("button");
+    editBtn.className = "action-edit";
+    editBtn.textContent = t("mapping_edit");
+    editBtn.addEventListener("click", () => ouvrirModalMapping(fichier));
+    gererCell.appendChild(editBtn);
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "action-delete";
+    delBtn.textContent = t("mapping_delete");
+    delBtn.addEventListener("click", () => supprimerMapping(fichier.id));
+    gererCell.appendChild(delBtn);
+
+    tr.appendChild(gererCell);
 
     tbody.appendChild(tr);
   }
 
   mappingsActuels = donnees.elements;
-  afficherMappings();
-}
-
-function afficherMappings() {
-  const tbody = el("mapping-rows");
-  tbody.replaceChildren();
-
-  for (const mapping of mappingsActuels) {
-    const tr = document.createElement("tr");
-
-    const idCell = document.createElement("td");
-    const code = document.createElement("code");
-    code.textContent = mapping.id;
-    idCell.appendChild(code);
-    tr.appendChild(idCell);
-
-    const haCell = document.createElement("td");
-    haCell.textContent = mapping.ha_path;
-    tr.appendChild(haCell);
-
-    const gitCell = document.createElement("td");
-    gitCell.textContent = mapping.git_path;
-    tr.appendChild(gitCell);
-
-    const dirCell = document.createElement("td");
-    dirCell.textContent = mapping.direction;
-    tr.appendChild(dirCell);
-
-    const actionCell = document.createElement("td");
-
-    const editBtn = document.createElement("button");
-    editBtn.className = "action-edit";
-    editBtn.textContent = t("mapping_edit");
-    editBtn.addEventListener("click", () => ouvrirModalMapping(mapping));
-    actionCell.appendChild(editBtn);
-
-    const delBtn = document.createElement("button");
-    delBtn.className = "action-delete";
-    delBtn.textContent = t("mapping_delete");
-    delBtn.addEventListener("click", () => supprimerMapping(mapping.id));
-    actionCell.appendChild(delBtn);
-
-    tr.appendChild(actionCell);
-    tbody.appendChild(tr);
-  }
 }
 
 function copierMappingsPourEnvoi() {
@@ -1766,7 +1706,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/0.2.4"
+    server_version = "HomelabGitManagement/0.2.5"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 

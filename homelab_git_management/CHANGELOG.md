@@ -2,6 +2,17 @@
 
 All notable changes to this add-on are documented here.
 
+## 0.2.5
+
+- Merged the two dashboard tables ("Managed elements status" and
+  "Configured mappings") into one: each row now shows the HA path, the
+  Git path, the comparison state and the Edit/Delete/Deploy actions
+  together, instead of the same mapping appearing twice across two
+  separate tables. Dropped the now-redundant Type and Direction
+  columns (shown instead as a small icon next to the element name, and
+  folded into the comparison cell only when relevant) to keep the
+  table from feeling as crowded.
+
 ## 0.2.4
 
 - Real-world testing showed the local options.json this add-on reads
