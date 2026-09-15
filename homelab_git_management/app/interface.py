@@ -1,3 +1,33 @@
+#!/usr/bin/env python3
+
+###############################################################################
+# HOMELAB GIT MANAGEMENT — INTERFACE
+###############################################################################
+#
+# Role:
+#   Serve the Ingress web UI for Homelab Git Management.
+#
+# Two modes:
+#   - setup mode: no github_repository option is configured yet. The page
+#     shows the generated Deploy Key's public half so the user can paste
+#     it into GitHub -> Settings -> Deploy Keys, plus the exact option
+#     fields to fill in afterwards.
+#   - dashboard mode: a repository is configured. The page shows the
+#     Git <-> Home Assistant comparison state for every mapping and lets
+#     the user trigger a Git refresh (read-only) or a deployment
+#     (write, gated on browser confirm() first).
+#
+# Security:
+#   - no file content is ever displayed, no secret, only metadata;
+#   - only the *public* half of the Deploy Key is ever shown;
+#   - deployment is only proposed for elements the engine itself marks
+#     deployable_now (not protected, direction: git_to_ha, state
+#     actually different); /api/deploy reuses deployer_element(), so no
+#     rule is duplicated here;
+#   - Home Assistant's own Ingress layer handles who can reach this page.
+#
+###############################################################################
+
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path, PurePosixPath
