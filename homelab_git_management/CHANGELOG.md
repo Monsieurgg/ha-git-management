@@ -2,6 +2,16 @@
 
 All notable changes to this add-on are documented here.
 
+## 0.1.4
+
+- Fixed a real gap found during end-to-end testing: the engine's
+  `[BACKUP]` / `[DEPLOY]` / `[ROLLBACK]` log lines were silently
+  discarded when triggered from the Ingress UI (Refresh / Deploy
+  buttons), because their output was captured only to build an error
+  message and never forwarded. They now always reach the add-on's real
+  logs (success or failure), while the routine background reload every
+  5 seconds (status polling) stays silent as intended.
+
 ## 0.1.3
 
 - The "Open the Configuration tab" link now sits inline, right next to
