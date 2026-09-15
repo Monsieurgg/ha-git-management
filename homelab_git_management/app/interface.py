@@ -38,6 +38,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -729,8 +730,11 @@ async function supprimerMapping(id) {
   }
 }
 
+let browseADejaRepliCetteOuverture = false;
+
 function ouvrirBrowse(racine, cheminActuel) {
   browseRacine = racine;
+  browseADejaRepliCetteOuverture = false;
   browseCheminCourant = cheminActuel && cheminActuel.trim()
     ? cheminActuel.trim()
     : (racine === "ha" ? "/config" : "");
@@ -743,6 +747,17 @@ function fermerBrowse() {
   el("browse-modal").hidden = true;
 }
 
+function cheminParentSimple(chemin, racine) {
+  if (racine === "ha") {
+    const parties = chemin.replace(/^\/config\/?/, "").split("/").filter(Boolean);
+    parties.pop();
+    return parties.length ? `/config/${parties.join("/")}` : "/config";
+  }
+  const parties = chemin.split("/").filter(Boolean);
+  parties.pop();
+  return parties.join("/");
+}
+
 async function chargerBrowse() {
   const erreur = el("browse-error");
   erreur.style.display = "none";
@@ -752,7 +767,18 @@ async function chargerBrowse() {
     const parametres = new URLSearchParams({ root: browseRacine, path: browseCheminCourant });
     const reponse = await fetch(`${cheminBaseIngress()}api/browse?${parametres}`, { cache: "no-store" });
     const donnees = await reponse.json();
-    if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
+
+    if (!reponse.ok || !donnees.ok) {
+      // Reopening Browse on a field that already holds a file path (not
+      // a directory) used to just show an error. Back up to the parent
+      // directory once instead, like a normal file picker would.
+      if (!browseADejaRepliCetteOuverture && browseCheminCourant) {
+        browseADejaRepliCetteOuverture = true;
+        browseCheminCourant = cheminParentSimple(browseCheminCourant, browseRacine);
+        return chargerBrowse();
+      }
+      throw new Error(donnees.error || `HTTP ${reponse.status}`);
+    }
 
     browseCheminCourant = donnees.path;
     el("browse-breadcrumb").textContent = donnees.path || (browseRacine === "git" ? "/" : "/config");
@@ -1262,6 +1288,34 @@ def valider_mappings_proposes(module, mappings_proposes: list) -> list:
                 "and can never be managed by a mapping"
             )
 
+        # A mapping's ha_path/git_path are picked independently (two
+        # separate browse dialogs), so nothing before this enforced they
+        # actually describe "the same" thing. Catch the two most common
+        # mistakes explicitly, for whichever side already exists on disk,
+        # instead of letting them surface later as an opaque engine
+        # startup failure.
+        if chemin_ha.exists():
+            if kind == "file" and chemin_ha.is_dir():
+                raise ValueError(f"{element_id}: ha_path is a directory, but kind is 'file'")
+            if kind == "directory" and not chemin_ha.is_dir():
+                raise ValueError(f"{element_id}: ha_path is a file, but kind is 'directory'")
+
+        if chemin_git.exists():
+            if kind == "file" and chemin_git.is_dir():
+                raise ValueError(f"{element_id}: git_path is a directory, but kind is 'file'")
+            if kind == "directory" and not chemin_git.is_dir():
+                raise ValueError(f"{element_id}: git_path is a file, but kind is 'directory'")
+
+        if kind == "file":
+            suffixe_ha = PurePosixPath(ha_path).suffix.lower()
+            suffixe_git = PurePosixPath(git_path).suffix.lower()
+            if suffixe_ha != suffixe_git:
+                raise ValueError(
+                    f"{element_id}: ha_path and git_path have different file "
+                    f"extensions ({suffixe_ha or '(none)'} vs {suffixe_git or '(none)'}) "
+                    "— they are almost certainly not meant to be the same file"
+                )
+
         resultat.append({
             "id": element_id,
             "kind": kind,
@@ -1308,6 +1362,42 @@ def ecrire_options_supervisor(champs: dict) -> tuple[bool, str | None]:
     return True, None
 
 
+def mappings_correspondent(actuels: object, attendus: list) -> bool:
+    """Structural comparison used only to detect whether the just-written
+    mappings have become visible yet — not a validation function."""
+
+    def normaliser(liste):
+        if not isinstance(liste, list):
+            return None
+        return [
+            (m.get("id"), m.get("kind") or "file", m.get("ha_path"), m.get("git_path"), m.get("direction"))
+            for m in liste
+            if isinstance(m, dict)
+        ]
+
+    return normaliser(actuels) == normaliser(attendus)
+
+
+def attendre_options_persistees(mappings_attendus: list, delai_max: float = 4.0) -> bool:
+    """Supervisor's POST /addons/self/options can return success before
+    the on-disk options.json this add-on reads is actually updated —
+    observed during end-to-end testing: a save was accepted (200) but
+    the very next read still showed the previous mappings. Poll briefly
+    for the change to become visible rather than trusting one immediate
+    re-read."""
+
+    intervalle = 0.25
+    ecoule = 0.0
+
+    while ecoule < delai_max:
+        if mappings_correspondent(lire_options().get("mappings"), mappings_attendus):
+            return True
+        time.sleep(intervalle)
+        ecoule += intervalle
+
+    return mappings_correspondent(lire_options().get("mappings"), mappings_attendus)
+
+
 def gerer_sauvegarde_mappings(handler: "InterfaceHandler") -> None:
 
     longueur = int(handler.headers.get("Content-Length", 0) or 0)
@@ -1344,6 +1434,23 @@ def gerer_sauvegarde_mappings(handler: "InterfaceHandler") -> None:
 
     if not succes:
         handler.repondre_json(502, {"ok": False, "error": erreur_ecriture})
+        return
+
+    if not attendre_options_persistees(mappings_valides):
+        print(
+            "[homelab-git-management] [interface] WARNING: Supervisor accepted "
+            "the mappings update but it was not visible on disk within the "
+            "timeout",
+            flush=True,
+        )
+        handler.repondre_json(504, {
+            "ok": False,
+            "error": (
+                "Supervisor confirmed the save, but the new configuration did "
+                "not become visible in time. Wait a few seconds, then click "
+                "Refresh — the change is very likely applied anyway."
+            ),
+        })
         return
 
     print(
@@ -1569,7 +1676,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/0.2.0"
+    server_version = "HomelabGitManagement/0.2.1"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 

@@ -2,6 +2,26 @@
 
 All notable changes to this add-on are documented here.
 
+## 0.2.1
+
+- Fixed a real bug found during testing: saving a mapping from the
+  dashboard could report success while the new configuration silently
+  failed to appear — Home Assistant Supervisor's options-save API can
+  return success slightly before the configuration this add-on reads
+  is actually updated. Saving now waits for the change to become
+  visible (a few hundred milliseconds, typically) before confirming;
+  if it still isn't visible after a few seconds, the add-on now says so
+  explicitly instead of showing a stale, unexplained state.
+- New validation when saving a mapping: the HA path and Git path must
+  now agree with the chosen `kind` (a "file" mapping can't point at an
+  existing directory, and vice versa), and for `kind: file`, both paths
+  must share the same file extension. Both catch a mismatched pick
+  immediately, with a clear message, instead of failing later as an
+  opaque engine error.
+- The directory browser now recovers automatically if reopened on a
+  field that already holds a file path (not a directory): it backs up
+  to the containing folder instead of showing an error.
+
 ## 0.2.0
 
 - New: mappings can now be created, edited and deleted directly from the
