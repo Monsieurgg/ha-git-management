@@ -2,6 +2,18 @@
 
 All notable changes to this add-on are documented here.
 
+## 0.2.3
+
+- Fixed a UX regression introduced in 0.2.1/0.2.2: a mapping save that
+  Supervisor had genuinely accepted could still show a red "not visible
+  in time" error a few seconds later, with no clear next step (Cancel?
+  close?). Supervisor's own success response is now treated as the
+  real confirmation — the dialog always closes on a successful save,
+  and if the local view hasn't caught up yet, the regular 5-second
+  refresh picks it up on its own, no action needed. The brief local
+  wait (now 3s) still makes the common, fast case feel instant; it is
+  no longer able to turn a real success into an error.
+
 ## 0.2.2
 
 - Raised the wait for a mapping save to become visible from 4 to 12
