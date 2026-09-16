@@ -68,6 +68,13 @@ explicitement — par défaut, l'add-on ne gère rien du tout.
 
 ## Installation
 
+Ajout en un clic (nécessite que [My Home Assistant](https://my.home-assistant.io/)
+soit lié à votre instance) :
+
+[![Ajouter ce dépôt à votre Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FMonsieurgg%2Fha-git-management)
+
+Ou manuellement :
+
 1. Dans Home Assistant, allez dans **Paramètres → Modules complémentaires
    → Boutique des modules**.
 2. Cliquez sur le menu **⋮** (en haut à droite) → **Dépôts**.
