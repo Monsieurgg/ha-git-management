@@ -64,6 +64,22 @@ brief "restarting" overlay and recovers on its own. This uses the same
 "self"-scoped Supervisor API (`/addons/self/restart`): it can only ever
 restart this add-on, never another one or Home Assistant itself.
 
+## Exposure and authentication
+
+This add-on has no LAN port of its own (`ingress: true` with no `ports:`
+entry in `config.yaml`) — the only way to reach it is through Home
+Assistant's own Ingress proxy, which requires a logged-in, admin-level
+Home Assistant user (`panel_admin: true`). The add-on's HTTP server never
+authenticates requests itself; it relies entirely on that Ingress layer,
+the same model every other Home Assistant add-on with a web UI uses.
+
+The write endpoints (`/api/mappings`, `/api/deploy`, `/api/refresh`) carry
+no separate CSRF token, for the same reason: Ingress URLs are per-install
+and session-scoped, and nothing outside an authenticated admin session can
+reach them. Every payload they do accept is still independently bounded in
+size and re-validated against the engine's own rules before anything is
+written or deployed.
+
 ## Comparison states
 
 - **identical** — byte-for-byte equal.

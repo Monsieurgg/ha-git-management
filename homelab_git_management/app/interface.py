@@ -1279,7 +1279,9 @@ def gerer_browse(handler: "InterfaceHandler") -> None:
 #     be reliable.
 ###############################################################################
 
-MAPPINGS_PAYLOAD_MAX_BYTES = 262144  # 256 KiB: generous, but bounded
+REQUEST_PAYLOAD_MAX_BYTES = 262144  # 256 KiB: generous, but bounded — shared
+                                     # cap for every POST body this add-on
+                                     # reads (mappings, deploy target).
 
 
 def valider_mappings_proposes(module, mappings_proposes: list) -> list:
@@ -1483,13 +1485,10 @@ def attendre_options_persistees(mappings_attendus: list, delai_max: float = 3.0)
 
 def gerer_sauvegarde_mappings(handler: "InterfaceHandler") -> None:
 
-    longueur = int(handler.headers.get("Content-Length", 0) or 0)
+    corps_requete = handler.lire_corps_borne(REQUEST_PAYLOAD_MAX_BYTES)
 
-    if longueur > MAPPINGS_PAYLOAD_MAX_BYTES:
-        handler.repondre_json(413, {"ok": False, "error": "payload too large"})
+    if corps_requete is None:
         return
-
-    corps_requete = handler.rfile.read(longueur) if longueur > 0 else b"{}"
 
     try:
         charge = json.loads(corps_requete)
@@ -1761,7 +1760,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/0.2.6"
+    server_version = "HomelabGitManagement/1.0.0"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 
@@ -1777,6 +1776,28 @@ class InterfaceHandler(BaseHTTPRequestHandler):
         corps = json.dumps(donnees, ensure_ascii=False).encode("utf-8")
         self.envoyer_entetes(statut, "application/json; charset=utf-8")
         self.wfile.write(corps)
+
+    def lire_corps_borne(self, max_bytes: int) -> bytes | None:
+        """Reads the request body, bounded to `max_bytes`. Responds with
+        an error and returns None on an invalid or oversized
+        Content-Length — every caller must check for None before using
+        the result."""
+
+        try:
+            longueur = int(self.headers.get("Content-Length", "0"))
+        except (TypeError, ValueError):
+            self.repondre_json(400, {"ok": False, "error": "invalid Content-Length"})
+            return None
+
+        if longueur < 0:
+            self.repondre_json(400, {"ok": False, "error": "invalid Content-Length"})
+            return None
+
+        if longueur > max_bytes:
+            self.repondre_json(413, {"ok": False, "error": "payload too large"})
+            return None
+
+        return self.rfile.read(longueur) if longueur > 0 else b"{}"
 
     def do_GET(self) -> None:
 
@@ -1822,8 +1843,10 @@ class InterfaceHandler(BaseHTTPRequestHandler):
 
         if chemin.endswith("/api/deploy"):
 
-            longueur = int(self.headers.get("Content-Length", 0) or 0)
-            corps_requete = self.rfile.read(longueur) if longueur > 0 else b"{}"
+            corps_requete = self.lire_corps_borne(REQUEST_PAYLOAD_MAX_BYTES)
+
+            if corps_requete is None:
+                return
 
             try:
                 charge = json.loads(corps_requete)

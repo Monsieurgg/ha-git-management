@@ -2,6 +2,30 @@
 
 All notable changes to this add-on are documented here.
 
+## 1.0.0 — First stable public release
+
+- README rewritten in French (primary, shown by default on GitHub) with an
+  English version (`README.en.md`) kept in sync, both explaining the main
+  use case this add-on is built around: generative-AI coding tools can
+  write or edit Home Assistant dashboards/configuration in a connected
+  GitHub repository, and this add-on is the safe, explicit-confirmation
+  bridge to bring that generated content into a live Home Assistant
+  instance and iterate quickly between the two.
+- Security hardening pass ahead of the stable release: `/api/deploy` now
+  enforces the same 256 KiB request-size cap `/api/mappings` already had
+  (it previously read the request body with no upper bound), and a
+  malformed `Content-Length` header on either endpoint is now rejected
+  with a clean error instead of crashing the request. No externally
+  reachable vulnerability was found in this pass — this closes a
+  robustness gap, not an exploit.
+- DOCS.md now documents this add-on's exposure model explicitly (Ingress-
+  only, no LAN port, admin-only panel, no separate CSRF token because
+  Ingress sessions already are per-install and authenticated) instead of
+  leaving it implicit.
+- No functional or behavioral change to the comparison, deployment,
+  backup or rollback engine — this release is documentation and
+  hardening only, on top of the 0.2.x feature set below.
+
 ## 0.2.6
 
 - The "Manage" column now shows the Deploy button directly when it
