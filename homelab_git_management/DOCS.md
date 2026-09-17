@@ -30,7 +30,7 @@ Each entry under `mappings`:
 | `kind` | `file` \| `directory` | Defaults to `file`. Directories can be compared but not deployed. |
 | `ha_path` | string | Absolute path under `/config`. |
 | `git_path` | string | Path relative to the repository root. |
-| `direction` | `git_to_ha` \| `ha_to_git` \| `bidirectional` | `git_to_ha` and `ha_to_git` are both implemented. `bidirectional` is accepted by validation but makes the add-on refuse to start, with an explicit error naming the offending mapping. |
+| `direction` | `git_to_ha` \| `ha_to_git` \| `bidirectional` | All three are implemented. |
 
 ## Managing mappings from the dashboard
 
@@ -114,6 +114,44 @@ narrowly: only for `ha_to_git` mappings in a blocked state, capped in
 size, and skipped entirely (a "cannot preview" message instead) for
 binary content. This content never leaves your own authenticated Ingress
 session — see **Exposure and authentication** below.
+
+## Two-way sync (bidirectional)
+
+A mapping configured with `direction: bidirectional` combines both
+directions above on the same file: either Deploy (Git → Home Assistant)
+or Push (Home Assistant → Git) can apply, and the add-on decides which
+button to show based on which side actually changed since the last
+sync — never on raw content difference alone. Reusing the exact same
+reference-based comparison built for `ha_to_git` (see above) is what
+makes this safe: it is what tells apart "only Home Assistant changed"
+from "only Git changed" from "both changed independently" — a plain
+"latest edit wins" comparison cannot make that distinction and could
+silently discard a real change on either side.
+
+- Only Home Assistant changed → **Push** is offered.
+- Only Git changed → **Deploy** is offered.
+- Both changed since the last sync → neither button appears
+  automatically. The mapping shows a **CONFLICT** badge and a
+  **Resolve** button, exactly like `ha_to_git`'s conflict screen (dates
+  + line-by-line diff), but with two resolutions that both actually
+  write: **force-deploy** Git → Home Assistant, or **force-push** Home
+  Assistant → Git. There is no passive "accept without syncing" choice
+  here — for a one-way mapping that made sense (it just meant "stop
+  offering to push"), but for a two-way mapping it would only leave the
+  two sides mismatched and immediately show the same conflict again.
+- A `bidirectional` mapping with no sync history yet and content that
+  already differs on both sides also starts as a conflict: with two
+  independent, unrelated histories and no prior agreement recorded,
+  this add-on does not guess which one is authoritative — a human picks
+  once, explicitly, via the same forced resolution above.
+- The write-capable Deploy Key and the line-ending safety check
+  described above for `ha_to_git` apply identically to a
+  `bidirectional` mapping's Push side. Nothing additional to configure
+  if `ha_to_git` is already set up.
+- The four protected core files can be mapped with
+  `direction: bidirectional`, but only their Push side is ever
+  available — Deploy (writing them from Git) remains permanently
+  blocked, exactly as for `git_to_ha`.
 
 ## Exposure and authentication
 

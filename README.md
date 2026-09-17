@@ -113,14 +113,14 @@ mappings:
 - `ha_path` : chemin absolu sous `/config` (votre répertoire de
   configuration Home Assistant réel).
 - `git_path` : chemin relatif à la racine du dépôt.
-- `direction` : `git_to_ha`, `ha_to_git`, ou `bidirectional`. `git_to_ha`
-  et `ha_to_git` sont tous les deux implémentés — `ha_to_git` pousse vers
-  GitHub via une deuxième clé SSH dédiée en écriture, séparée de la clé
-  en lecture seule, et détecte les vrais conflits (les deux côtés modifiés
-  indépendamment) plutôt que d'écraser silencieusement un changement fait
-  directement sur GitHub. Voir `DOCS.md` pour le détail. `bidirectional`
-  est accepté par le schéma pour la compatibilité future, mais l'add-on
-  refuse de démarrer avec une erreur claire si vous le configurez.
+- `direction` : `git_to_ha`, `ha_to_git`, ou `bidirectional` — les trois
+  sont implémentés. `ha_to_git` pousse vers GitHub via une deuxième clé
+  SSH dédiée en écriture, séparée de la clé en lecture seule.
+  `bidirectional` combine les deux sens sur le même fichier : l'add-on
+  propose Déployer ou Envoyer selon le côté qui a réellement changé, et
+  détecte les vrais conflits (les deux côtés modifiés indépendamment)
+  plutôt que d'écraser silencieusement un changement fait directement sur
+  GitHub. Voir `DOCS.md` pour le détail complet.
 
 Les fichiers `configuration.yaml`, `scripts.yaml`, `automations.yaml` et
 `scenes.yaml` propres à Home Assistant sont toujours protégés contre un
@@ -145,10 +145,10 @@ déploiement automatique.
   charge (comparaison uniquement) — une réduction de risque délibérée ;
 - l'interface web n'affiche jamais le contenu des fichiers ni aucun
   secret, uniquement l'état de comparaison — sauf une exception unique et
-  volontaire : l'écran de résolution de conflit `ha_to_git` affiche une
-  différence ligne par ligne pour vous aider à choisir quelle version
-  garder (jamais transmis ailleurs qu'à votre propre session Ingress
-  authentifiée) ;
+  volontaire : l'écran de résolution de conflit (`ha_to_git` et
+  `bidirectional`) affiche une différence ligne par ligne pour vous aider
+  à choisir quelle version garder (jamais transmis ailleurs qu'à votre
+  propre session Ingress authentifiée) ;
 - l'add-on n'a pas de port réseau propre : il n'est joignable que via
   l'Ingress de Home Assistant, qui exige une session utilisateur
   administrateur authentifiée. Voir

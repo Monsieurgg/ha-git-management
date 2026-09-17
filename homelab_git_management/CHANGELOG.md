@@ -2,6 +2,40 @@
 
 All notable changes to this add-on are documented here.
 
+## 1.2.0 — bidirectional
+
+- New: `direction: bidirectional` is now implemented. A mapping
+  configured this way can go either way — Deploy (Git → Home Assistant)
+  or Push (Home Assistant → Git) — with the add-on deciding which button
+  to offer based on which side actually changed since the last sync, not
+  just on raw content difference. This reuses the same reference-based
+  conflict detection built for `ha_to_git`, applied to both directions
+  instead of one.
+- Only Home Assistant changed → Push is offered. Only Git changed →
+  Deploy is offered. Both changed independently → neither is offered
+  automatically; the mapping shows a **CONFLICT** badge and a **Resolve**
+  button, with the same dates + line-by-line diff screen as `ha_to_git`,
+  now with two real resolutions: force-deploy Git → Home Assistant, or
+  force-push Home Assistant → Git. Both actually write — there is no
+  passive "acknowledge without syncing" option for `bidirectional`,
+  since leaving the two sides mismatched would just recreate the same
+  difference on the next comparison.
+- A brand-new `bidirectional` mapping with no sync history yet and
+  already-divergent content starts as a conflict too, requiring one
+  explicit, forced resolution to establish which side is authoritative —
+  this add-on never guesses which of two unrelated histories to trust.
+- `configuration.yaml` / `scripts.yaml` / `automations.yaml` /
+  `scenes.yaml` can be mapped with `direction: bidirectional`, but the
+  Deploy side (Git → Home Assistant) remains permanently blocked for
+  these four files, exactly as for `git_to_ha` — only the Push side
+  (Home Assistant → Git) is available for them.
+- The line-ending safety check and the write-capable Deploy Key
+  requirement introduced for `ha_to_git` apply identically to
+  `bidirectional`'s Push side — nothing new to configure if you already
+  set up `ha_to_git`.
+- No change to `git_to_ha` or `ha_to_git` behavior when used on their
+  own.
+
 ## 1.1.0 — ha_to_git
 
 - New: `direction: ha_to_git` is now implemented. A mapping configured

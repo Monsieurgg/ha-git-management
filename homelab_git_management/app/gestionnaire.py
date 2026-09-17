@@ -101,11 +101,8 @@ RUNTIME_IGNORED_SUFFIXES = {".pyc"}
 # written by something other than the Supervisor UI).
 ALLOWED_DIRECTIONS = {"git_to_ha", "ha_to_git", "bidirectional"}
 
-# git_to_ha and ha_to_git both have a real implementation. bidirectional
-# still needs a merge/conflict policy on top of what ha_to_git already
-# does in one direction — accepted by the schema, refused here with an
-# explicit message rather than silently doing nothing.
-IMPLEMENTED_DIRECTIONS = {"git_to_ha", "ha_to_git"}
+# All three declared directions are implemented.
+IMPLEMENTED_DIRECTIONS = {"git_to_ha", "ha_to_git", "bidirectional"}
 
 ALLOWED_KINDS = {"file", "directory"}
 
@@ -1009,6 +1006,48 @@ def enregistrer_synchronise(element_id: str, empreinte_ha: str, empreinte_git: s
     ecrire_etat_synchro(etat)
 
 
+def evaluer_synchro_bidirectionnel(
+    element_id: str, contenu_ha: bytes | None, contenu_git: bytes | None
+) -> str:
+    """Same reference-based comparison as evaluer_synchro_ha_to_git(), but
+    for a mapping where either side may legitimately be the one that
+    moved — so, unlike ha_to_git, a Git-only change is not suspicious by
+    itself, it just means the other direction (git_to_ha) is the safe one
+    right now. Returns one of:
+      - "ha_ahead"  — only Home Assistant changed: Push is safe.
+      - "git_ahead" — only Git changed: Deploy is safe.
+      - "conflict"  — both changed (or there is no prior record at all,
+                      which is exactly as ambiguous — with two possible
+                      directions and no history, this add-on does not
+                      guess which side is authoritative); a human must
+                      pick one explicitly.
+      - "clean"     — both sides already match the reference (should not
+                      normally be reached here, since the caller only
+                      calls this for a "different" comparison result)."""
+
+    reference = lire_etat_synchro().get(element_id)
+
+    if reference is None:
+        return "conflict"
+
+    empreinte_ha = empreinte(contenu_ha) if contenu_ha is not None else None
+    empreinte_git = empreinte(contenu_git) if contenu_git is not None else None
+
+    ha_a_change = empreinte_ha != reference.get("ha")
+    git_a_change = empreinte_git != reference.get("git")
+
+    if ha_a_change and git_a_change:
+        return "conflict"
+
+    if ha_a_change:
+        return "ha_ahead"
+
+    if git_a_change:
+        return "git_ahead"
+
+    return "clean"
+
+
 def evaluer_synchro_ha_to_git(
     element_id: str, contenu_ha: bytes | None, contenu_git: bytes | None
 ) -> str:
@@ -1047,7 +1086,7 @@ etats_synchro = {}
 
 for element in elements:
 
-    if element["direction"] != "ha_to_git":
+    if element["direction"] not in {"ha_to_git", "bidirectional"}:
         continue
 
     element_id = element["id"]
@@ -1086,12 +1125,21 @@ for element in elements:
         etats_synchro[element_id] = "clean"
         continue
 
-    etats_synchro[element_id] = evaluer_synchro_ha_to_git(element_id, contenu_ha, contenu_git)
+    if element["direction"] == "ha_to_git":
 
-    if etats_synchro[element_id] == "conflict":
-        log(f"[SYNC] {element_id}: CONFLICT - both Home Assistant and Git changed since the last sync")
-    elif etats_synchro[element_id] == "external":
-        log(f"[SYNC] {element_id}: external change detected on the Git side, push blocked until acknowledged")
+        etats_synchro[element_id] = evaluer_synchro_ha_to_git(element_id, contenu_ha, contenu_git)
+
+        if etats_synchro[element_id] == "conflict":
+            log(f"[SYNC] {element_id}: CONFLICT - both Home Assistant and Git changed since the last sync")
+        elif etats_synchro[element_id] == "external":
+            log(f"[SYNC] {element_id}: external change detected on the Git side, push blocked until acknowledged")
+
+    else:  # bidirectional
+
+        etats_synchro[element_id] = evaluer_synchro_bidirectionnel(element_id, contenu_ha, contenu_git)
+
+        if etats_synchro[element_id] == "conflict":
+            log(f"[SYNC] {element_id}: CONFLICT - both Home Assistant and Git changed since the last sync")
 
 
 ###############################################################################
@@ -1340,8 +1388,8 @@ def deployer_vers_git(element: dict, etat_synchro: str) -> None:
 
     element_id = element["id"]
 
-    if element["direction"] != "ha_to_git":
-        raise RuntimeError("this mapping is not configured for ha_to_git")
+    if element["direction"] not in {"ha_to_git", "bidirectional"}:
+        raise RuntimeError("this mapping cannot push to Git")
 
     if element["kind"] == "directory":
         raise RuntimeError("directory deployment is not supported")
@@ -1510,7 +1558,9 @@ def deployer_vers_git(element: dict, etat_synchro: str) -> None:
 # nothing duplicated.
 ###############################################################################
 
-def deployer_element(target: str, confirmation: bool, forcer: bool = False) -> None:
+def deployer_element(
+    target: str, confirmation: bool, forcer: bool = False, sens: str | None = None
+) -> None:
 
     elements_par_id = {element["id"]: element for element in elements}
 
@@ -1564,6 +1614,69 @@ def deployer_element(target: str, confirmation: bool, forcer: bool = False) -> N
 
         try:
             deployer_vers_git(element, etat_synchro)
+        except Exception as exc:
+            erreur(f"{target}: {exc}")
+
+        return
+
+    if element["direction"] == "bidirectional":
+
+        if sens not in {"git_to_ha", "ha_to_git"}:
+            erreur(
+                f"{target}: this mapping is bidirectional — an explicit "
+                "sens ('git_to_ha' or 'ha_to_git') is required"
+            )
+
+        etat_synchro = etats_synchro.get(target, "conflict")
+
+        if etat_synchro == "conflict" and not forcer:
+            erreur(
+                f"{target}: blocked: both Home Assistant and Git changed "
+                "since the last sync — resolve the conflict first"
+            )
+
+        if not forcer:
+
+            if sens == "ha_to_git" and etat_synchro != "ha_ahead":
+                erreur(f"{target}: push not safe right now (state={etat_synchro})")
+
+            if sens == "git_to_ha" and etat_synchro != "git_ahead":
+                erreur(f"{target}: deployment not safe right now (state={etat_synchro})")
+
+        if sens == "git_to_ha":
+
+            chemin_ha = convertir_chemin_ha(element["ha_path"])
+
+            if est_chemin_protege(chemin_ha):
+                erreur(f"{target}: deployment forbidden — protected core file")
+
+            if etat in {"identical", "equivalent"}:
+                log(f"[COMMAND] {target}: no deployment needed; state={etat}")
+                return
+
+            if etat not in {"different", "missing_ha"}:
+                erreur(f"{target}: state not deployable: {etat}")
+
+            try:
+                deployer_fichier(element, etat)
+                contenu_final = chemin_ha.read_bytes()
+                enregistrer_synchronise(target, empreinte(contenu_final), empreinte(contenu_final))
+            except Exception as exc:
+                erreur(f"{target}: {exc}")
+
+            return
+
+        # sens == "ha_to_git"
+
+        if etat in {"identical", "equivalent"}:
+            log(f"[COMMAND] {target}: no push needed; state={etat}")
+            return
+
+        if etat not in {"different", "missing_git"}:
+            erreur(f"{target}: state not pushable: {etat}")
+
+        try:
+            deployer_vers_git(element, "clean" if forcer else etat_synchro)
         except Exception as exc:
             erreur(f"{target}: {exc}")
 
@@ -1627,7 +1740,7 @@ def traiter_commande_stdin() -> None:
     if not isinstance(commande, dict):
         erreur("stdin command: expected a JSON object")
 
-    champs_autorises = {"command", "target", "confirm", "force"}
+    champs_autorises = {"command", "target", "confirm", "force", "sens"}
     champs_inconnus = set(commande) - champs_autorises
 
     if champs_inconnus:
@@ -1637,6 +1750,7 @@ def traiter_commande_stdin() -> None:
     target = commande.get("target")
     confirmation = commande.get("confirm")
     forcer = commande.get("force", False)
+    sens = commande.get("sens")
 
     if action not in {"deploy", "acknowledge_git"}:
         erreur(f"stdin command: unauthorized action: {action}")
@@ -1652,6 +1766,9 @@ def traiter_commande_stdin() -> None:
     if not isinstance(forcer, bool):
         erreur("stdin command: 'force' must be a boolean")
 
+    if sens is not None and sens not in {"git_to_ha", "ha_to_git"}:
+        erreur("stdin command: 'sens' must be 'git_to_ha' or 'ha_to_git'")
+
     if action == "acknowledge_git":
         acquitter_git(target)
         return
@@ -1659,7 +1776,7 @@ def traiter_commande_stdin() -> None:
     if confirmation is not True:
         erreur(f"{target}: missing explicit confirmation; confirm:true is required")
 
-    deployer_element(target, confirmation, forcer)
+    deployer_element(target, confirmation, forcer, sens)
 
 
 ###############################################################################

@@ -346,7 +346,7 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
       <select id="mapping-direction" class="form-input">
         <option value="git_to_ha" data-i18n="dir_git_to_ha">Git -&gt; Home Assistant</option>
         <option value="ha_to_git" data-i18n="dir_ha_to_git">Home Assistant -&gt; Git</option>
-        <option value="bidirectional" data-i18n="dir_bidirectional" disabled>Bidirectional (coming soon)</option>
+        <option value="bidirectional" data-i18n="dir_bidirectional">Bidirectional</option>
       </select>
 
       <label class="form-label" data-i18n="field_ha_path">Home Assistant path</label>
@@ -434,7 +434,6 @@ const STRINGS = {
     state_identical: "IDENTICAL", state_equivalent: "EQUIVALENT", state_different: "DIFFERENT",
     state_missing_ha: "MISSING ON HA", state_missing_git: "MISSING IN GIT",
     state_missing_both: "MISSING FROM BOTH", state_error: "ERROR", state_unknown: "UNKNOWN",
-    dir_forbidden: "FORBIDDEN",
     protected: "PROTECTED",
     action_deploy: "Deploy",
     action_push: "Push", action_resolve: "Resolve",
@@ -447,6 +446,7 @@ const STRINGS = {
     confirm_deploy: 'Deploy "{target}" from GitHub to Home Assistant?\n\nA backup of the current file will be created before writing. If verification fails, an automatic rollback restores the previous content.',
     confirm_push: 'Push "{target}" from Home Assistant to GitHub?\n\nThis creates a real commit on your repository.',
     confirm_force_push: 'Force-push "{target}"? This overwrites whatever is currently on GitHub with the Home Assistant version — the GitHub-side change shown in the diff will be discarded.',
+    confirm_force_deploy: 'Force-deploy "{target}"? This overwrites the current Home Assistant file with the GitHub version — the Home Assistant-side change shown in the diff will be discarded.',
     confirm_keep_git: 'Accept the current GitHub content as the new reference point for "{target}"? Nothing is pushed and Home Assistant is not touched — if it still differs afterward, a normal Push becomes available again.',
     write_key_title: "Optional: write access (ha_to_git)",
     write_key_intro: "Only needed if you configure a mapping with direction: ha_to_git. This is a separate key from the one above — the read-only key never gains write access, and this key stays inactive until you add it on GitHub yourself, this time allowing write access.",
@@ -455,6 +455,7 @@ const STRINGS = {
     conflict_ha_date: "Home Assistant, last modified:",
     conflict_git_date: "Git, last commit:",
     conflict_keep_git: "Keep the Git version",
+    conflict_force_git: "Force-deploy Git → Home Assistant",
     conflict_force_ha: "Force-push Home Assistant → Git",
     conflict_explain_conflict: "Both Home Assistant and Git changed independently since the last sync. Review the difference below, then choose which version to keep.",
     conflict_explain_external: "Git changed outside this add-on (most likely edited directly on GitHub) since the last sync. Pushing now would silently discard that edit.",
@@ -483,7 +484,7 @@ const STRINGS = {
     kind_file: "File", kind_directory: "Directory (comparison only)",
     dir_git_to_ha: "Git -> Home Assistant",
     dir_ha_to_git: "Home Assistant -> Git",
-    dir_bidirectional: "Bidirectional (coming soon)",
+    dir_bidirectional: "Bidirectional",
     browse: "Browse…", browse_title: "Browse",
     browse_select_here: "Select this folder",
     cancel: "Cancel", save: "Save",
@@ -508,7 +509,6 @@ const STRINGS = {
     state_identical: "IDENTIQUE", state_equivalent: "ÉQUIVALENT", state_different: "DIFFÉRENT",
     state_missing_ha: "ABSENT HA", state_missing_git: "ABSENT GIT",
     state_missing_both: "ABSENT DES DEUX", state_error: "ERREUR", state_unknown: "INCONNU",
-    dir_forbidden: "INTERDIT",
     protected: "PROTÉGÉ",
     action_deploy: "Déployer",
     action_push: "Envoyer", action_resolve: "Résoudre",
@@ -521,6 +521,7 @@ const STRINGS = {
     confirm_deploy: 'Déployer « {target} » de GitHub vers Home Assistant ?\n\nUne sauvegarde du fichier actuel sera créée avant l\'écriture. En cas d\'échec de la vérification, un rollback automatique restaure l\'ancien contenu.',
     confirm_push: 'Envoyer « {target} » de Home Assistant vers GitHub ?\n\nCela crée un vrai commit sur votre dépôt.',
     confirm_force_push: 'Forcer l\'envoi de « {target} » ? Ceci écrase ce qui est actuellement sur GitHub par la version Home Assistant — le changement côté GitHub affiché dans le diff sera perdu.',
+    confirm_force_deploy: 'Forcer le déploiement de « {target} » ? Ceci écrase le fichier Home Assistant actuel par la version GitHub — le changement côté Home Assistant affiché dans le diff sera perdu.',
     confirm_keep_git: 'Accepter le contenu GitHub actuel comme nouvelle référence pour « {target} » ? Rien n\'est envoyé et Home Assistant n\'est pas modifié — si ça diffère toujours ensuite, un envoi normal redevient possible.',
     write_key_title: "Optionnel : accès en écriture (ha_to_git)",
     write_key_intro: "Nécessaire uniquement si vous configurez un mapping avec direction: ha_to_git. C'est une clé séparée de celle ci-dessus — la clé en lecture seule n'obtient jamais d'accès écriture, et cette clé reste inactive tant que vous ne l'ajoutez pas vous-même sur GitHub, cette fois en autorisant l'écriture.",
@@ -529,6 +530,7 @@ const STRINGS = {
     conflict_ha_date: "Home Assistant, dernière modification :",
     conflict_git_date: "Git, dernier commit :",
     conflict_keep_git: "Garder la version Git",
+    conflict_force_git: "Forcer le déploiement Git → Home Assistant",
     conflict_force_ha: "Forcer l'envoi Home Assistant → Git",
     conflict_explain_conflict: "Home Assistant et Git ont tous les deux changé indépendamment depuis la dernière synchro. Regardez la différence ci-dessous, puis choisissez quelle version garder.",
     conflict_explain_external: "Git a changé en dehors de cet add-on (probablement modifié directement sur GitHub) depuis la dernière synchro. Envoyer maintenant écraserait silencieusement ce changement.",
@@ -557,7 +559,7 @@ const STRINGS = {
     kind_file: "Fichier", kind_directory: "Dossier (comparaison uniquement)",
     dir_git_to_ha: "Git -> Home Assistant",
     dir_ha_to_git: "Home Assistant -> Git",
-    dir_bidirectional: "Bidirectionnel (bientôt disponible)",
+    dir_bidirectional: "Bidirectionnel",
     browse: "Parcourir…", browse_title: "Parcourir",
     browse_select_here: "Choisir ce dossier",
     cancel: "Annuler", save: "Enregistrer",
@@ -724,12 +726,9 @@ function afficherEtat(donnees) {
       verrou.title = t("protected");
       cmpCell.appendChild(verrou);
     }
-    if (fichier.direction !== "git_to_ha" && fichier.direction !== "ha_to_git") {
-      cmpCell.appendChild(badge(t("dir_forbidden"), "blocked"));
-    }
-    if (fichier.direction === "ha_to_git" && fichier.sync_status === "conflict") {
+    if (fichier.sync_status === "conflict") {
       cmpCell.appendChild(badge(t("state_conflict"), "blocked"));
-    } else if (fichier.direction === "ha_to_git" && fichier.sync_status === "external") {
+    } else if (fichier.sync_status === "external") {
       cmpCell.appendChild(badge(t("state_external"), "blocked"));
     }
     tr.appendChild(cmpCell);
@@ -752,7 +751,7 @@ function afficherEtat(donnees) {
       gererCell.appendChild(pushBtn);
     }
 
-    if (fichier.direction === "ha_to_git" && (fichier.sync_status === "conflict" || fichier.sync_status === "external")) {
+    if (fichier.sync_status === "conflict" || fichier.sync_status === "external") {
       const resolveBtn = document.createElement("button");
       resolveBtn.className = "action-resolve";
       resolveBtn.textContent = t("action_resolve");
@@ -1082,7 +1081,7 @@ async function deployerElement(cible, bouton) {
     const reponse = await fetch(`${cheminBaseIngress()}api/deploy`, {
       method: "POST", cache: "no-store",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target: cible }),
+      body: JSON.stringify({ target: cible, sens: "git_to_ha" }),
     });
     const donnees = await reponse.json();
     if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
@@ -1108,7 +1107,7 @@ async function pousserElement(cible, bouton) {
     const reponse = await fetch(`${cheminBaseIngress()}api/deploy`, {
       method: "POST", cache: "no-store",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target: cible, force: false }),
+      body: JSON.stringify({ target: cible, force: false, sens: "ha_to_git" }),
     });
     const donnees = await reponse.json();
     if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
@@ -1122,6 +1121,7 @@ async function pousserElement(cible, bouton) {
 }
 
 let conflictCibleCourante = null;
+let conflictDirectionCourante = null;
 
 function construireLigneDiff(ligne) {
   const span = document.createElement("span");
@@ -1138,12 +1138,16 @@ function construireLigneDiff(ligne) {
 
 async function ouvrirConflitModal(fichier) {
   conflictCibleCourante = fichier.id;
+  conflictDirectionCourante = fichier.direction;
 
   const erreur = el("conflict-error");
   erreur.style.display = "none";
 
   el("conflict-explain").textContent =
     fichier.sync_status === "conflict" ? t("conflict_explain_conflict") : t("conflict_explain_external");
+
+  el("conflict-keep-git").textContent =
+    fichier.direction === "bidirectional" ? t("conflict_force_git") : t("conflict_keep_git");
 
   el("conflict-ha-date").textContent = "…";
   el("conflict-git-date").textContent = "…";
@@ -1188,6 +1192,7 @@ async function ouvrirConflitModal(fichier) {
 function fermerConflitModal() {
   el("conflict-modal").hidden = true;
   conflictCibleCourante = null;
+  conflictDirectionCourante = null;
 }
 
 async function resoudreForcer() {
@@ -1200,7 +1205,7 @@ async function resoudreForcer() {
     const reponse = await fetch(`${cheminBaseIngress()}api/deploy`, {
       method: "POST", cache: "no-store",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target: conflictCibleCourante, force: true }),
+      body: JSON.stringify({ target: conflictCibleCourante, force: true, sens: "ha_to_git" }),
     });
     const donnees = await reponse.json();
     if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
@@ -1208,6 +1213,28 @@ async function resoudreForcer() {
     afficherEtat(donnees);
   } catch (exception) {
     erreur.textContent = t("error_push") + exception.message;
+    erreur.style.display = "block";
+  }
+}
+
+async function resoudreForcerDeploy() {
+  if (!conflictCibleCourante) return;
+  if (!window.confirm(t("confirm_force_deploy").replace("{target}", conflictCibleCourante))) return;
+
+  const erreur = el("conflict-error");
+
+  try {
+    const reponse = await fetch(`${cheminBaseIngress()}api/deploy`, {
+      method: "POST", cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: conflictCibleCourante, force: true, sens: "git_to_ha" }),
+    });
+    const donnees = await reponse.json();
+    if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
+    fermerConflitModal();
+    afficherEtat(donnees);
+  } catch (exception) {
+    erreur.textContent = t("error_deploy") + exception.message;
     erreur.style.display = "block";
   }
 }
@@ -1231,6 +1258,14 @@ async function resoudreAcquitter() {
   } catch (exception) {
     erreur.textContent = t("error_acknowledge") + exception.message;
     erreur.style.display = "block";
+  }
+}
+
+function resoudreVersGit() {
+  if (conflictDirectionCourante === "bidirectional") {
+    resoudreForcerDeploy();
+  } else {
+    resoudreAcquitter();
   }
 }
 
@@ -1286,7 +1321,7 @@ el("copy-key-write").addEventListener("click", copierCleEcriture);
 el("conflict-modal-close").addEventListener("click", fermerConflitModal);
 el("conflict-cancel").addEventListener("click", fermerConflitModal);
 el("conflict-force-ha").addEventListener("click", resoudreForcer);
-el("conflict-keep-git").addEventListener("click", resoudreAcquitter);
+el("conflict-keep-git").addEventListener("click", resoudreVersGit);
 
 el("add-mapping").addEventListener("click", () => ouvrirModalMapping(null));
 el("mapping-modal-close").addEventListener("click", fermerModalMapping);
@@ -1610,9 +1645,10 @@ def gerer_diff(handler: "InterfaceHandler") -> None:
         handler.repondre_json(404, {"ok": False, "error": "unmanaged element"})
         return
 
-    if element["direction"] != "ha_to_git" or element["kind"] != "file":
+    if element["direction"] not in {"ha_to_git", "bidirectional"} or element["kind"] != "file":
         handler.repondre_json(
-            400, {"ok": False, "error": "diff is only available for ha_to_git file mappings"}
+            400,
+            {"ok": False, "error": "diff is only available for ha_to_git/bidirectional file mappings"},
         )
         return
 
@@ -1630,7 +1666,9 @@ def gerer_diff(handler: "InterfaceHandler") -> None:
 
     reponse = {
         "ok": True,
-        "sync_status": module.etats_synchro.get(cible, "clean"),
+        "sync_status": module.etats_synchro.get(
+            cible, "conflict" if element["direction"] == "bidirectional" else "clean"
+        ),
         "ha_modified_at": (
             datetime.fromtimestamp(chemin_ha.stat().st_mtime, tz=timezone.utc).isoformat(timespec="seconds")
             if ha_existe else None
@@ -1755,11 +1793,15 @@ def valider_mappings_proposes(module, mappings_proposes: list) -> list:
         chemin_git = module.convertir_chemin_git(git_path)
         module.verifier_chemin_resolu(chemin_git, module.GIT_ROOT, "/data/repository")
 
-        if kind == "file" and direction == "git_to_ha" and module.est_chemin_protege(chemin_ha):
+        if (
+            kind == "file"
+            and direction in {"git_to_ha", "bidirectional"}
+            and module.est_chemin_protege(chemin_ha)
+        ):
             raise ValueError(
                 f"{element_id}: this is a core Home Assistant config file "
-                "and can never be deployed to via git_to_ha (it can still "
-                "be tracked read-only, e.g. with direction: ha_to_git)"
+                "and can never be deployed to from Git (it can still be "
+                "tracked read-only, e.g. with direction: ha_to_git)"
             )
 
         # A mapping's ha_path/git_path are picked independently (two
@@ -2074,13 +2116,18 @@ def declencher_rafraichissement_git() -> tuple[bool, str | None]:
 # because the browser button already required an explicit confirm().
 ###############################################################################
 
-def declencher_deploiement(cible: object, forcer: object = False) -> tuple[bool, str | None]:
+def declencher_deploiement(
+    cible: object, forcer: object = False, sens: object = None
+) -> tuple[bool, str | None]:
 
     if not isinstance(cible, str) or not cible:
         return False, "invalid target"
 
     if not isinstance(forcer, bool):
         return False, "invalid force flag"
+
+    if sens is not None and sens not in {"git_to_ha", "ha_to_git"}:
+        return False, "invalid sens"
 
     module, erreur_chargement = charger_gestionnaire()
 
@@ -2096,7 +2143,7 @@ def declencher_deploiement(cible: object, forcer: object = False) -> tuple[bool,
             contextlib.redirect_stderr(sortie_capturee),
         ):
 
-            module.deployer_element(cible, True, forcer)
+            module.deployer_element(cible, True, forcer, sens)
 
     except SystemExit as exc:
 
@@ -2187,21 +2234,39 @@ def construire_etat() -> dict:
         direction = element["direction"]
         kind = element["kind"]
 
-        deployable_now = (
-            not protege
-            and kind != "directory"
-            and direction == "git_to_ha"
-            and etat in {"different", "missing_ha"}
-        )
-
         sync_status = None
+        deployable_now = False
         pushable_now = False
 
-        if direction == "ha_to_git":
+        if direction == "git_to_ha":
+
+            deployable_now = (
+                not protege
+                and kind != "directory"
+                and etat in {"different", "missing_ha"}
+            )
+
+        elif direction == "ha_to_git":
+
             sync_status = gestionnaire.etats_synchro.get(element_id, "clean")
             pushable_now = (
                 kind != "directory"
                 and sync_status == "clean"
+                and etat in {"different", "missing_git"}
+            )
+
+        elif direction == "bidirectional":
+
+            sync_status = gestionnaire.etats_synchro.get(element_id, "conflict")
+            deployable_now = (
+                not protege
+                and kind != "directory"
+                and sync_status == "git_ahead"
+                and etat in {"different", "missing_ha"}
+            )
+            pushable_now = (
+                kind != "directory"
+                and sync_status == "ha_ahead"
                 and etat in {"different", "missing_git"}
             )
 
@@ -2242,7 +2307,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/1.1.0"
+    server_version = "HomelabGitManagement/1.2.0"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 
@@ -2341,8 +2406,9 @@ class InterfaceHandler(BaseHTTPRequestHandler):
 
             cible = charge.get("target") if isinstance(charge, dict) else None
             forcer = charge.get("force", False) if isinstance(charge, dict) else False
+            sens = charge.get("sens") if isinstance(charge, dict) else None
 
-            succes, message_erreur = declencher_deploiement(cible, forcer)
+            succes, message_erreur = declencher_deploiement(cible, forcer, sens)
 
             if not succes:
                 self.repondre_json(502, {"ok": False, "error": message_erreur})
