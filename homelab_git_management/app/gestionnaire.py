@@ -653,6 +653,25 @@ def est_fichier_texte(chemin: Path, contenu: bytes) -> bool:
     return chemin.suffix.lower() in TEXT_EXTENSIONS and b"\0" not in contenu
 
 
+def convention_fin_de_ligne(contenu: bytes) -> str:
+    """Best-effort classification of a text file's line-ending
+    convention: "lf", "crlf", "mixed", or "none" (no line break at all).
+    Used only to catch an accidental convention flip before it turns a
+    one-line edit into a diff touching every line — see
+    deployer_vers_git()."""
+
+    if b"\n" not in contenu:
+        return "none"
+
+    total_crlf = contenu.count(b"\r\n")
+    total_lf_seul = contenu.count(b"\n") - total_crlf
+
+    if total_crlf and total_lf_seul:
+        return "mixed"
+
+    return "crlf" if total_crlf else "lf"
+
+
 def classer_fichier(chemin_ha: Path, chemin_git: Path) -> str:
 
     contenu_ha = lire_octets(chemin_ha)
@@ -1369,6 +1388,34 @@ def deployer_vers_git(element: dict, etat_synchro: str) -> None:
     parent_git.mkdir(parents=True, exist_ok=True)
 
     contenu_source = chemin_ha.read_bytes()
+
+    if chemin_git.exists():
+
+        contenu_git_actuel = chemin_git.read_bytes()
+
+        if est_fichier_texte(chemin_ha, contenu_source) and est_fichier_texte(chemin_git, contenu_git_actuel):
+
+            convention_existante = convention_fin_de_ligne(contenu_git_actuel)
+            convention_nouvelle = convention_fin_de_ligne(contenu_source)
+
+            if (
+                convention_existante in {"lf", "crlf"}
+                and convention_nouvelle in {"lf", "crlf"}
+                and convention_existante != convention_nouvelle
+            ):
+                raise RuntimeError(
+                    "line-ending mismatch: this file is tracked in Git with "
+                    f"{convention_existante.upper()} line endings, but the "
+                    f"current Home Assistant version uses "
+                    f"{convention_nouvelle.upper()} — pushing as-is would "
+                    "silently convert every line and bury the real change "
+                    "in a massive diff. This usually means the source file "
+                    "was edited or transferred through something that "
+                    "changes line endings (a Windows text editor, an SFTP "
+                    "client in text mode, a Samba mount, ...) rather than "
+                    "an intentional format change — fix the line endings "
+                    "at the source before pushing again"
+                )
 
     mode_destination = (
         stat.S_IMODE(chemin_git.stat().st_mode) if chemin_git.exists() else 0o644

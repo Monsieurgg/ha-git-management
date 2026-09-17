@@ -29,6 +29,13 @@ All notable changes to this add-on are documented here.
   metadata — scoped strictly to ha_to_git conflicts, capped in size, and
   skipped entirely for binary content. DOCS.md documents this exception
   explicitly.
+- Found during real-world testing: if the Home Assistant file already has
+  different line endings than what is tracked in Git (typically because
+  something upstream — an editor, a network share, ...— touched the live
+  file), pushing it as-is silently converts every line and buries the
+  real change in a diff touching the whole file. A push is now blocked
+  with a clear error whenever the two sides' line-ending conventions
+  disagree, instead of committing that noise.
 - `configuration.yaml` / `scripts.yaml` / `automations.yaml` /
   `scenes.yaml` can now be mapped with `direction: ha_to_git` (read-only
   from Home Assistant's side, so the existing protection — which is only

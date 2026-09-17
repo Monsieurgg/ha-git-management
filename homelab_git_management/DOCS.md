@@ -99,6 +99,14 @@ Push button is replaced with a **Resolve** button, which shows:
   is pushed and Home Assistant is not touched; if the two still differ
   afterward, that shows up as a normal, safe-to-push difference again).
 
+**Line-ending safety.** Before pushing, the add-on also checks whether the
+Home Assistant file's line-ending convention (LF vs. CRLF) matches what is
+already tracked in Git for that path. A mismatch — usually a sign that
+something upstream (an editor, a network share, a text-mode file
+transfer, ...) touched the live file — is blocked with a clear error
+instead of being pushed: converting every line's ending would otherwise
+bury the real, intended change in a diff touching the whole file.
+
 **The one exception to "no file content is ever shown."** The Resolve
 screen above is the single place in this add-on where real file content
 reaches the browser, instead of only comparison metadata. It is scoped
