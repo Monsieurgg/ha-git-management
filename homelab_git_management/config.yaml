@@ -9,7 +9,7 @@
 # =============================================================================
 
 name: "Homelab Git Management"
-version: "1.0.0"
+version: "1.1.0"
 slug: "homelab_git_management"
 
 description: >-

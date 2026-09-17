@@ -106,11 +106,14 @@ mappings:
 - `ha_path`: absolute path under `/config` (your live Home Assistant
   configuration directory).
 - `git_path`: path relative to the repository root.
-- `direction`: `git_to_ha`, `ha_to_git`, or `bidirectional`. Only
-  `git_to_ha` is implemented in this release — the other two are accepted
-  by the configuration schema for forward compatibility, but the add-on
-  refuses to start with a clear error if you configure one, rather than
-  silently doing nothing.
+- `direction`: `git_to_ha`, `ha_to_git`, or `bidirectional`. Both
+  `git_to_ha` and `ha_to_git` are implemented — `ha_to_git` pushes to
+  GitHub through a second, dedicated write-capable SSH key, kept separate
+  from the read-only key, and detects real conflicts (both sides changed
+  independently) instead of silently overwriting an edit made directly on
+  GitHub. See `DOCS.md` for the detail. `bidirectional` is accepted by
+  the schema for forward compatibility, but the add-on refuses to start
+  with a clear error if you configure it.
 
 Home Assistant's own `configuration.yaml`, `scripts.yaml`,
 `automations.yaml` and `scenes.yaml` are always protected against
@@ -134,7 +137,10 @@ deployment.
 - directory deployment is intentionally not supported (comparison only) —
   a deliberate reduction of risk;
 - the web UI never displays file contents or secrets, only comparison
-  state;
+  state — with one deliberate, narrow exception: the `ha_to_git` conflict
+  resolution screen shows a line-by-line difference to help you decide
+  which version to keep (never transmitted anywhere beyond your own
+  authenticated Ingress session);
 - the add-on has no network port of its own: it is only reachable through
   Home Assistant's Ingress, which requires an authenticated admin user
   session. See

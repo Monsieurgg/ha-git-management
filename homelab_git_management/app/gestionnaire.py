@@ -45,6 +45,7 @@
 
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
+import hashlib
 import json
 import os
 import re
@@ -68,7 +69,22 @@ SSH_DIR = Path("/data/ssh")
 SSH_PRIVATE_KEY = SSH_DIR / "github_deploy_key"
 GITHUB_KNOWN_HOSTS = SSH_DIR / "known_hosts"
 
+# Separate, dedicated write-capable key: kept apart from the read-only key
+# above so the code paths that only ever need read access (comparison,
+# git_to_ha) never even reference a key capable of writing to GitHub. A
+# mapping's ha_to_git direction is inert until this key is generated *and*
+# added as a (non-read-only) Deploy Key on GitHub — see run.sh.
+SSH_PRIVATE_KEY_WRITE = SSH_DIR / "github_deploy_key_write"
+
 BACKUP_ROOT = Path("/data/deploy-backups")
+
+# Records the content of each side the last time it was confirmed in
+# agreement (either because a comparison found them identical/equivalent,
+# or because a git_to_ha/ha_to_git deployment just made them match). This
+# is what lets a later comparison tell "only one side changed since" apart
+# from "both changed independently" (a real conflict) — a plain timestamp
+# comparison cannot make that distinction; see SYNCHRONIZATION STATE below.
+SYNC_STATE_PATH = Path("/data/sync-state.json")
 
 UTF8_BOM = b"\xef\xbb\xbf"
 
@@ -85,11 +101,11 @@ RUNTIME_IGNORED_SUFFIXES = {".pyc"}
 # written by something other than the Supervisor UI).
 ALLOWED_DIRECTIONS = {"git_to_ha", "ha_to_git", "bidirectional"}
 
-# Only this direction has a real implementation so far. ha_to_git and
-# bidirectional both need a write-capable Deploy Key and a commit/push
-# path that do not exist yet — accepted by the schema, refused here with
-# an explicit message rather than silently doing nothing.
-IMPLEMENTED_DIRECTIONS = {"git_to_ha"}
+# git_to_ha and ha_to_git both have a real implementation. bidirectional
+# still needs a merge/conflict policy on top of what ha_to_git already
+# does in one direction — accepted by the schema, refused here with an
+# explicit message rather than silently doing nothing.
+IMPLEMENTED_DIRECTIONS = {"git_to_ha", "ha_to_git"}
 
 ALLOWED_KINDS = {"file", "directory"}
 
@@ -407,6 +423,35 @@ def executer_git_local(*arguments: str) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         timeout=30,
+    )
+
+
+GITHUB_SSH_COMMAND_WRITE = (
+    f"ssh -i {SSH_PRIVATE_KEY_WRITE} "
+    "-o IdentitiesOnly=yes "
+    "-o BatchMode=yes "
+    "-o StrictHostKeyChecking=yes "
+    f"-o UserKnownHostsFile={GITHUB_KNOWN_HOSTS} "
+    "-o HostKeyAlgorithms=ssh-ed25519"
+)
+
+
+def executer_git_reseau_ecriture(*arguments: str) -> subprocess.CompletedProcess:
+    """A git command that needs the network AND write access (push), via
+    the dedicated write-capable Deploy Key. No other function in this file
+    ever references this key or this command — every read-only code path
+    (comparison, git_to_ha, mettre_a_jour_clone) uses executer_git_reseau
+    above instead, which only ever holds the read-only key."""
+
+    environnement = dict(os.environ)
+    environnement["GIT_SSH_COMMAND"] = GITHUB_SSH_COMMAND_WRITE
+
+    return subprocess.run(
+        ["git", "-C", str(GIT_ROOT), *arguments],
+        env=environnement,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
 
 
@@ -889,6 +934,148 @@ def ecrire_atomiquement(
 
 
 ###############################################################################
+# SYNCHRONIZATION STATE (ha_to_git)
+#
+# For every mapping configured with direction: ha_to_git, this records
+# what each side looked like the last time they were known to agree (a
+# comparison found them identical/equivalent, or a push just made them
+# match). Comparing that against the current content on each side is what
+# tells apart "only one side changed since" from "both changed
+# independently" — a real conflict. A plain timestamp comparison cannot
+# make that distinction: it only tells you which side was touched most
+# recently, never whether the *other* side also changed since the two
+# last agreed — which is exactly how a "latest wins" policy can silently
+# discard a real edit made directly on GitHub. So this is not optional
+# bookkeeping: without it, ha_to_git could not be made safe at all.
+###############################################################################
+
+def lire_etat_synchro() -> dict:
+
+    try:
+        with SYNC_STATE_PATH.open("r", encoding="utf-8") as fichier:
+            donnees = json.load(fichier)
+        return donnees if isinstance(donnees, dict) else {}
+    except Exception:
+        return {}
+
+
+def ecrire_etat_synchro(etat: dict) -> None:
+    """Best-effort persistence: a failure here must never block a push
+    that already succeeded — it only means the next comparison falls back
+    to treating this mapping as never-synced (safe, just less precise)."""
+
+    try:
+        SYNC_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        contenu = json.dumps(etat, indent=2, sort_keys=True).encode("utf-8")
+        ecrire_atomiquement(SYNC_STATE_PATH, contenu, 0o600)
+    except Exception as exc:
+        log(f"WARNING: could not persist sync state: {exc}")
+
+
+def empreinte(contenu: bytes) -> str:
+    return hashlib.sha256(contenu).hexdigest()
+
+
+def enregistrer_synchronise(element_id: str, empreinte_ha: str, empreinte_git: str) -> None:
+    """Marks `element_id`'s two sides as agreeing right now — called after
+    a successful push, and after a comparison finds them already
+    identical/equivalent for a mapping with no prior (or a stale) record."""
+
+    etat = lire_etat_synchro()
+    etat[element_id] = {
+        "ha": empreinte_ha,
+        "git": empreinte_git,
+        "synced_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    ecrire_etat_synchro(etat)
+
+
+def evaluer_synchro_ha_to_git(
+    element_id: str, contenu_ha: bytes | None, contenu_git: bytes | None
+) -> str:
+    """Returns one of:
+      - "clean"    — safe to push Home Assistant -> Git (only Home
+                     Assistant changed, or there is no prior record yet —
+                     the same no-history behavior git_to_ha has always
+                     had for a first deployment).
+      - "external" — only Git changed since the last agreement (most
+                     likely edited directly on GitHub); pushing now would
+                     silently discard that edit.
+      - "conflict" — both sides changed independently since the last
+                     agreement; a real conflict, needs a human decision."""
+
+    reference = lire_etat_synchro().get(element_id)
+
+    if reference is None:
+        return "clean"
+
+    empreinte_ha = empreinte(contenu_ha) if contenu_ha is not None else None
+    empreinte_git = empreinte(contenu_git) if contenu_git is not None else None
+
+    ha_a_change = empreinte_ha != reference.get("ha")
+    git_a_change = empreinte_git != reference.get("git")
+
+    if ha_a_change and git_a_change:
+        return "conflict"
+
+    if git_a_change:
+        return "external"
+
+    return "clean"
+
+
+etats_synchro = {}
+
+for element in elements:
+
+    if element["direction"] != "ha_to_git":
+        continue
+
+    element_id = element["id"]
+    etat_comparaison = resultats_comparaison.get(element_id)
+
+    if etat_comparaison not in {"identical", "equivalent", "different"}:
+        # missing_ha / missing_git / missing_both / error: nothing to
+        # evaluate here — deployer_vers_git() re-checks existence itself,
+        # and a missing side needs no conflict tracking yet.
+        continue
+
+    try:
+        chemin_ha = convertir_chemin_ha(element["ha_path"])
+        chemin_git = convertir_chemin_git(element["git_path"])
+        contenu_ha = lire_octets(chemin_ha) if chemin_ha.exists() else None
+        contenu_git = lire_octets(chemin_git) if chemin_git.exists() else None
+    except Exception as exc:
+        log(f"[SYNC] {element_id}: could not read content for sync evaluation: {exc}")
+        continue
+
+    if etat_comparaison in {"identical", "equivalent"}:
+
+        if contenu_ha is not None and contenu_git is not None:
+
+            reference = lire_etat_synchro().get(element_id)
+            nouvelle_ha = empreinte(contenu_ha)
+            nouvelle_git = empreinte(contenu_git)
+
+            if (
+                reference is None
+                or reference.get("ha") != nouvelle_ha
+                or reference.get("git") != nouvelle_git
+            ):
+                enregistrer_synchronise(element_id, nouvelle_ha, nouvelle_git)
+
+        etats_synchro[element_id] = "clean"
+        continue
+
+    etats_synchro[element_id] = evaluer_synchro_ha_to_git(element_id, contenu_ha, contenu_git)
+
+    if etats_synchro[element_id] == "conflict":
+        log(f"[SYNC] {element_id}: CONFLICT - both Home Assistant and Git changed since the last sync")
+    elif etats_synchro[element_id] == "external":
+        log(f"[SYNC] {element_id}: external change detected on the Git side, push blocked until acknowledged")
+
+
+###############################################################################
 # BACKUP
 ###############################################################################
 
@@ -1114,6 +1301,160 @@ def deployer_fichier(element: dict, etat: str) -> None:
 
 
 ###############################################################################
+# DEPLOYMENT TO GIT (ha_to_git)
+#
+# The reverse of deployer_fichier(): copies the current Home Assistant
+# file into the local Git clone, commits it, and pushes with the
+# dedicated write-capable Deploy Key. Git's own history is this
+# direction's backup/rollback mechanism — unlike the HA side, Git already
+# keeps every prior version, so there is no separate backup file to
+# manage. A failed push simply discards the local commit with
+# `git reset --hard`, leaving the clone matching whatever is actually on
+# GitHub rather than a dangling unpushed commit.
+###############################################################################
+
+COMMIT_AUTEUR = "Homelab Git Management"
+COMMIT_EMAIL = "noreply@homelab-git-management.local"
+
+
+def deployer_vers_git(element: dict, etat_synchro: str) -> None:
+
+    element_id = element["id"]
+
+    if element["direction"] != "ha_to_git":
+        raise RuntimeError("this mapping is not configured for ha_to_git")
+
+    if element["kind"] == "directory":
+        raise RuntimeError("directory deployment is not supported")
+
+    if etat_synchro == "conflict":
+        raise RuntimeError(
+            "push blocked: both Home Assistant and Git changed since the "
+            "last sync — resolve the conflict first"
+        )
+
+    if etat_synchro == "external":
+        raise RuntimeError(
+            "push blocked: the Git side changed outside this add-on since "
+            "the last sync — acknowledge it first"
+        )
+
+    if not SSH_PRIVATE_KEY_WRITE.is_file():
+        raise RuntimeError(
+            "no write-capable Deploy Key configured yet — add the second "
+            "public key shown in the setup screen to GitHub, with write "
+            "access enabled this time"
+        )
+
+    chemin_ha = convertir_chemin_ha(element["ha_path"])
+    chemin_git = convertir_chemin_git(element["git_path"])
+
+    verifier_chemin_resolu(chemin_ha, HA_ROOT, "/homeassistant")
+    verifier_chemin_resolu(chemin_git, GIT_ROOT, "/data/repository")
+
+    if chemin_ha.is_symlink():
+        raise RuntimeError("Home Assistant source must not be a symlink")
+
+    if not chemin_ha.exists() or not chemin_ha.is_file():
+        raise RuntimeError("Home Assistant source missing or not a file")
+
+    if chemin_git.is_symlink():
+        raise RuntimeError("Git target must not be a symlink")
+
+    if chemin_git.exists() and not chemin_git.is_file():
+        raise RuntimeError("existing Git target is not a file")
+
+    parent_git = chemin_git.parent
+    verifier_chemin_resolu(parent_git, GIT_ROOT, "/data/repository")
+    parent_git.mkdir(parents=True, exist_ok=True)
+
+    contenu_source = chemin_ha.read_bytes()
+
+    mode_destination = (
+        stat.S_IMODE(chemin_git.stat().st_mode) if chemin_git.exists() else 0o644
+    )
+
+    nettoyer_verrou_residuel()
+
+    tete_avant = executer_git_local("rev-parse", "HEAD").stdout.strip()
+
+    log(f"[PUSH] {element_id}: writing Home Assistant -> Git clone")
+
+    ecrire_atomiquement(chemin_git, contenu_source, mode_destination)
+
+    if chemin_git.read_bytes() != contenu_source:
+        raise RuntimeError("post-write verification failed before commit")
+
+    chemin_git_relatif = chemin_git.relative_to(GIT_ROOT).as_posix()
+
+    resultat_add = executer_git_local("add", "--", chemin_git_relatif)
+
+    if resultat_add.returncode != 0:
+        raise RuntimeError(f"git add failed: {resultat_add.stderr.strip()}")
+
+    resultat_statut = executer_git_local(
+        "status", "--porcelain", "--", chemin_git_relatif
+    )
+
+    if not resultat_statut.stdout.strip():
+        raise RuntimeError("nothing to commit (Git already matches Home Assistant)")
+
+    resultat_commit = executer_git_local(
+        "-c", f"user.name={COMMIT_AUTEUR}",
+        "-c", f"user.email={COMMIT_EMAIL}",
+        "commit",
+        "-m", f"Update {chemin_git_relatif} from Home Assistant",
+    )
+
+    if resultat_commit.returncode != 0:
+        erreur_msg = resultat_commit.stderr.strip() or resultat_commit.stdout.strip()
+        raise RuntimeError(f"git commit failed: {erreur_msg}")
+
+    log(f"[PUSH] {element_id}: pushing to origin/{GIT_REPOSITORY_BRANCH}")
+
+    resultat_push = executer_git_reseau_ecriture(
+        "push", "origin", f"HEAD:{GIT_REPOSITORY_BRANCH}"
+    )
+
+    if resultat_push.returncode != 0:
+
+        log(f"[PUSH] {element_id}: push failed, discarding local commit")
+
+        resultat_reset = executer_git_local("reset", "--hard", tete_avant)
+
+        if resultat_reset.returncode != 0:
+            log(
+                f"CRITICAL ERROR: {element_id}: push failed AND local reset "
+                f"failed: {resultat_reset.stderr.strip()}"
+            )
+            raise RuntimeError(
+                "push failed and the local clone could not be restored — "
+                "manual intervention required"
+            )
+
+        raise RuntimeError(f"git push failed: {resultat_push.stderr.strip()}")
+
+    tete_apres = executer_git_local("rev-parse", "HEAD").stdout.strip()
+
+    # The push above only moves the ref on GitHub; update our own local
+    # remote-tracking ref too, so the next comparison/refresh sees
+    # origin's HEAD as already applied instead of re-fetching to notice.
+    executer_git_local(
+        "update-ref", f"refs/remotes/origin/{GIT_REPOSITORY_BRANCH}", tete_apres
+    )
+
+    if chemin_git.read_bytes() != contenu_source:
+        raise RuntimeError(
+            "post-push verification failed: Git content changed unexpectedly"
+        )
+
+    enregistrer_synchronise(element_id, empreinte(contenu_source), empreinte(contenu_source))
+
+    log(f"[PUSH] {element_id}: atomic write + commit + push: OK ({tete_apres[:12]})")
+    log(f"[PUSH] {element_id}: SUCCESS")
+
+
+###############################################################################
 # DEPLOYMENT WITH CHECKS
 #
 # All the safety logic of a deployment (protection, direction, state)
@@ -1122,7 +1463,7 @@ def deployer_fichier(element: dict, etat: str) -> None:
 # nothing duplicated.
 ###############################################################################
 
-def deployer_element(target: str, confirmation: bool) -> None:
+def deployer_element(target: str, confirmation: bool, forcer: bool = False) -> None:
 
     elements_par_id = {element["id"]: element for element in elements}
 
@@ -1135,28 +1476,92 @@ def deployer_element(target: str, confirmation: bool) -> None:
     log(f"[COMMAND] deploy requested: {target}")
     log(f"[COMMAND] explicit confirmation: {confirmation}")
 
-    chemin_ha = convertir_chemin_ha(element["ha_path"])
-
-    if est_chemin_protege(chemin_ha):
-        erreur(f"{target}: deployment forbidden — protected core file")
-
-    if element["direction"] != "git_to_ha":
-        erreur(f"{target}: deployment forbidden by configured direction")
-
     if element["kind"] == "directory":
         erreur(f"{target}: directory deployment is not supported")
 
-    if etat in {"identical", "equivalent"}:
-        log(f"[COMMAND] {target}: no deployment needed; state={etat}")
+    if element["direction"] == "git_to_ha":
+
+        chemin_ha = convertir_chemin_ha(element["ha_path"])
+
+        if est_chemin_protege(chemin_ha):
+            erreur(f"{target}: deployment forbidden — protected core file")
+
+        if etat in {"identical", "equivalent"}:
+            log(f"[COMMAND] {target}: no deployment needed; state={etat}")
+            return
+
+        if etat not in {"different", "missing_ha"}:
+            erreur(f"{target}: state not deployable: {etat}")
+
+        try:
+            deployer_fichier(element, etat)
+        except Exception as exc:
+            erreur(f"{target}: {exc}")
+
         return
 
-    if etat not in {"different", "missing_ha"}:
-        erreur(f"{target}: state not deployable: {etat}")
+    if element["direction"] == "ha_to_git":
 
-    try:
-        deployer_fichier(element, etat)
-    except Exception as exc:
-        erreur(f"{target}: {exc}")
+        if etat in {"identical", "equivalent"}:
+            log(f"[COMMAND] {target}: no push needed; state={etat}")
+            return
+
+        if etat not in {"different", "missing_git"}:
+            erreur(f"{target}: state not pushable: {etat}")
+
+        etat_synchro = etats_synchro.get(target, "clean")
+
+        if forcer and etat_synchro in {"conflict", "external"}:
+            log(f"[COMMAND] {target}: {etat_synchro} overridden by explicit force")
+            etat_synchro = "clean"
+
+        try:
+            deployer_vers_git(element, etat_synchro)
+        except Exception as exc:
+            erreur(f"{target}: {exc}")
+
+        return
+
+    erreur(f"{target}: deployment forbidden by configured direction")
+
+
+def acquitter_git(target: str) -> None:
+    """Resolves a "conflict" or "external" sync state without pushing
+    anything: accepts whatever is currently on the Git side as the new
+    reference point. Home Assistant's file is left untouched. This turns
+    a blocked state back into a normal one — if Home Assistant's content
+    still differs afterward, it shows up as a plain, safe-to-push
+    difference on the next comparison, exactly as if it were the first
+    time this mapping was ever synced."""
+
+    elements_par_id = {element["id"]: element for element in elements}
+
+    if target not in elements_par_id:
+        erreur(f"unmanaged element: {target}")
+
+    element = elements_par_id[target]
+
+    if element["direction"] != "ha_to_git":
+        erreur(f"{target}: not a ha_to_git mapping")
+
+    log(f"[COMMAND] acknowledge Git state requested: {target}")
+
+    chemin_ha = convertir_chemin_ha(element["ha_path"])
+    chemin_git = convertir_chemin_git(element["git_path"])
+
+    contenu_ha = chemin_ha.read_bytes() if chemin_ha.exists() else None
+    contenu_git = chemin_git.read_bytes() if chemin_git.exists() else None
+
+    if contenu_git is None:
+        erreur(f"{target}: nothing on the Git side to acknowledge")
+
+    enregistrer_synchronise(
+        target,
+        empreinte(contenu_ha) if contenu_ha is not None else "",
+        empreinte(contenu_git),
+    )
+
+    log(f"[COMMAND] {target}: Git state acknowledged as the new reference point")
 
 
 def traiter_commande_stdin() -> None:
@@ -1175,7 +1580,7 @@ def traiter_commande_stdin() -> None:
     if not isinstance(commande, dict):
         erreur("stdin command: expected a JSON object")
 
-    champs_autorises = {"command", "target", "confirm"}
+    champs_autorises = {"command", "target", "confirm", "force"}
     champs_inconnus = set(commande) - champs_autorises
 
     if champs_inconnus:
@@ -1184,8 +1589,9 @@ def traiter_commande_stdin() -> None:
     action = commande.get("command")
     target = commande.get("target")
     confirmation = commande.get("confirm")
+    forcer = commande.get("force", False)
 
-    if action != "deploy":
+    if action not in {"deploy", "acknowledge_git"}:
         erreur(f"stdin command: unauthorized action: {action}")
 
     if (
@@ -1196,10 +1602,17 @@ def traiter_commande_stdin() -> None:
     ):
         erreur("stdin command: invalid target")
 
+    if not isinstance(forcer, bool):
+        erreur("stdin command: 'force' must be a boolean")
+
+    if action == "acknowledge_git":
+        acquitter_git(target)
+        return
+
     if confirmation is not True:
         erreur(f"{target}: missing explicit confirmation; confirm:true is required")
 
-    deployer_element(target, confirmation)
+    deployer_element(target, confirmation, forcer)
 
 
 ###############################################################################

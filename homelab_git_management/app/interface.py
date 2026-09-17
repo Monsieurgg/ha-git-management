@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path, PurePosixPath
 import contextlib
+import difflib
 import importlib
 import io
 import json
@@ -57,6 +58,14 @@ HA_ROOT = Path("/homeassistant")
 GIT_ROOT = Path("/data/repository")
 OPTIONS_PATH = Path("/data/options.json")
 SSH_PUBLIC_KEY = Path("/data/ssh/github_deploy_key.pub")
+SSH_PUBLIC_KEY_WRITE = Path("/data/ssh/github_deploy_key_write.pub")
+
+# The one place this add-on ever sends real file content to the browser,
+# instead of just comparison metadata — and only for this one narrow
+# purpose: helping a user resolve a ha_to_git conflict/external-change
+# state by seeing what actually differs. Never used for any other
+# mapping or state. See gerer_diff() and DOCS.md.
+DIFF_MAX_BYTES = 262144  # 256 KiB per side
 
 SUPERVISOR_API = "http://supervisor"
 
@@ -100,6 +109,8 @@ button { border: 1px solid var(--border); background: var(--surface); color: var
 button:hover { border-color: var(--accent); }
 button:disabled { opacity: 0.5; cursor: default; }
 .action-deploy { margin-right: 6px; padding: 4px 10px; font-size: 12px; border-color: var(--candidate); color: var(--candidate); }
+.action-push { margin-right: 6px; padding: 4px 10px; font-size: 12px; border-color: var(--accent); color: var(--accent); }
+.action-resolve { margin-right: 6px; padding: 4px 10px; font-size: 12px; border-color: var(--danger); color: var(--danger); }
 .summary { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 12px; margin-bottom: 18px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 15px; box-shadow: var(--shadow); }
 .card-label { color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
@@ -151,6 +162,19 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
   background: rgba(15,23,42,0.45); z-index: 50; padding: 16px; }
 .modal { background: var(--surface); border-radius: 14px; box-shadow: var(--shadow); width: 100%;
   max-width: 480px; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; }
+.modal-wide { max-width: 720px; }
+.conflict-dates { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; font-size: 13px; }
+.conflict-dates div { background: var(--surface-soft); border: 1px solid var(--border); border-radius: 10px;
+  padding: 8px 12px; }
+.conflict-dates .label { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.05em; margin-bottom: 3px; }
+.diff-view { margin: 0; padding: 12px; background: var(--surface-soft); border: 1px solid var(--border);
+  border-radius: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;
+  line-height: 1.5; white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow-y: auto; }
+.diff-add { background: var(--ok-bg); color: var(--ok); display: block; }
+.diff-remove { background: var(--danger-bg); color: var(--danger); display: block; }
+.diff-hunk { color: var(--info); display: block; }
+.conflict-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
 .modal-header { display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 15px 17px; border-bottom: 1px solid var(--border); }
 .modal-header h3 { margin: 0; font-size: 16px; }
@@ -225,6 +249,18 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
         <a id="setup-config-link" class="config-link-inline" target="_top" hidden data-i18n="setup_open_config">Open the Configuration tab →</a>
       </div>
       <div class="field-row"><span class="label" data-i18n="setup_branch_label">Configured branch</span><span id="setup-branch">—</span></div>
+    </div>
+  </div>
+
+  <div id="write-key-panel" class="panel" hidden>
+    <div class="panel-header"><h2 data-i18n="write_key_title">Optional: write access (ha_to_git)</h2></div>
+    <div class="panel-body">
+      <p class="field-row" data-i18n="write_key_intro"></p>
+      <div class="field-row"><span class="label" data-i18n="setup_write_key_label">Write-capable public key</span></div>
+      <div class="key-row">
+        <code id="setup-key-write" class="key-box">—</code>
+        <button id="copy-key-write" type="button" data-i18n="copy_key">Copy</button>
+      </div>
     </div>
   </div>
 
@@ -309,7 +345,7 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
       <label class="form-label" data-i18n="field_direction">Direction</label>
       <select id="mapping-direction" class="form-input">
         <option value="git_to_ha" data-i18n="dir_git_to_ha">Git -&gt; Home Assistant</option>
-        <option value="ha_to_git" data-i18n="dir_ha_to_git" disabled>Home Assistant -&gt; Git (coming soon)</option>
+        <option value="ha_to_git" data-i18n="dir_ha_to_git">Home Assistant -&gt; Git</option>
         <option value="bidirectional" data-i18n="dir_bidirectional" disabled>Bidirectional (coming soon)</option>
       </select>
 
@@ -351,6 +387,31 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
   </div>
 </div>
 
+<div id="conflict-modal" class="modal-overlay" hidden>
+  <div class="modal modal-wide">
+    <div class="modal-header">
+      <h3 id="conflict-modal-title" data-i18n="conflict_modal_title">Resolve</h3>
+      <button id="conflict-modal-close" type="button" class="modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="conflict-error" class="error"></div>
+      <p id="conflict-explain" class="field-row"></p>
+      <div class="conflict-dates">
+        <div><span class="label" data-i18n="conflict_ha_date">Home Assistant, last modified</span><span id="conflict-ha-date">—</span></div>
+        <div><span class="label" data-i18n="conflict_git_date">Git, last commit</span><span id="conflict-git-date">—</span></div>
+      </div>
+      <pre id="conflict-diff" class="diff-view">—</pre>
+      <div class="conflict-actions">
+        <button id="conflict-keep-git" type="button" data-i18n="conflict_keep_git">Keep the Git version</button>
+        <button id="conflict-force-ha" type="button" class="action-resolve" data-i18n="conflict_force_ha">Force-push Home Assistant → Git</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="conflict-cancel" type="button" data-i18n="cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div id="restart-overlay" class="restart-overlay" hidden>
   <div class="spinner"></div>
   <p data-i18n="restart_overlay_text">Applying your change — the add-on is restarting…</p>
@@ -376,10 +437,32 @@ const STRINGS = {
     dir_forbidden: "FORBIDDEN",
     protected: "PROTECTED",
     action_deploy: "Deploy",
+    action_push: "Push", action_resolve: "Resolve",
+    pushing: "Pushing...",
+    state_conflict: "CONFLICT", state_external: "EXTERNAL CHANGE",
     error_load: "Could not load status: ", error_refresh: "Git refresh failed: ",
     error_deploy: "Deployment failed: ",
+    error_push: "Push failed: ", error_acknowledge: "Could not acknowledge: ",
     deploying: "Deploying...",
     confirm_deploy: 'Deploy "{target}" from GitHub to Home Assistant?\n\nA backup of the current file will be created before writing. If verification fails, an automatic rollback restores the previous content.',
+    confirm_push: 'Push "{target}" from Home Assistant to GitHub?\n\nThis creates a real commit on your repository.',
+    confirm_force_push: 'Force-push "{target}"? This overwrites whatever is currently on GitHub with the Home Assistant version — the GitHub-side change shown in the diff will be discarded.',
+    confirm_keep_git: 'Accept the current GitHub content as the new reference point for "{target}"? Nothing is pushed and Home Assistant is not touched — if it still differs afterward, a normal Push becomes available again.',
+    write_key_title: "Optional: write access (ha_to_git)",
+    write_key_intro: "Only needed if you configure a mapping with direction: ha_to_git. This is a separate key from the one above — the read-only key never gains write access, and this key stays inactive until you add it on GitHub yourself, this time allowing write access.",
+    setup_write_key_label: "Write-capable public key:",
+    conflict_modal_title: "Resolve",
+    conflict_ha_date: "Home Assistant, last modified:",
+    conflict_git_date: "Git, last commit:",
+    conflict_keep_git: "Keep the Git version",
+    conflict_force_ha: "Force-push Home Assistant → Git",
+    conflict_explain_conflict: "Both Home Assistant and Git changed independently since the last sync. Review the difference below, then choose which version to keep.",
+    conflict_explain_external: "Git changed outside this add-on (most likely edited directly on GitHub) since the last sync. Pushing now would silently discard that edit.",
+    conflict_diff_loading: "Loading the difference…",
+    conflict_diff_binary: "This file's content cannot be shown as text.",
+    conflict_diff_too_large: "This file is too large to preview here.",
+    conflict_diff_error: "Could not load the difference: ",
+    conflict_diff_none: "No textual difference to show.",
     setup_title: "First-time setup",
     setup_step1: "Copy the public key below.",
     setup_step2: "On GitHub, open this repository's own Settings -> Deploy keys -> Add deploy key (not your personal account settings).",
@@ -399,7 +482,7 @@ const STRINGS = {
     field_ha_path: "Home Assistant path", field_git_path: "Git path",
     kind_file: "File", kind_directory: "Directory (comparison only)",
     dir_git_to_ha: "Git -> Home Assistant",
-    dir_ha_to_git: "Home Assistant -> Git (coming soon)",
+    dir_ha_to_git: "Home Assistant -> Git",
     dir_bidirectional: "Bidirectional (coming soon)",
     browse: "Browse…", browse_title: "Browse",
     browse_select_here: "Select this folder",
@@ -428,10 +511,32 @@ const STRINGS = {
     dir_forbidden: "INTERDIT",
     protected: "PROTÉGÉ",
     action_deploy: "Déployer",
+    action_push: "Envoyer", action_resolve: "Résoudre",
+    pushing: "Envoi...",
+    state_conflict: "CONFLIT", state_external: "CHANGEMENT EXTERNE",
     error_load: "Impossible de charger l'état : ", error_refresh: "Échec de l'actualisation Git : ",
     error_deploy: "Échec du déploiement : ",
+    error_push: "Échec de l'envoi : ", error_acknowledge: "Impossible d'acquitter : ",
     deploying: "Déploiement...",
     confirm_deploy: 'Déployer « {target} » de GitHub vers Home Assistant ?\n\nUne sauvegarde du fichier actuel sera créée avant l\'écriture. En cas d\'échec de la vérification, un rollback automatique restaure l\'ancien contenu.',
+    confirm_push: 'Envoyer « {target} » de Home Assistant vers GitHub ?\n\nCela crée un vrai commit sur votre dépôt.',
+    confirm_force_push: 'Forcer l\'envoi de « {target} » ? Ceci écrase ce qui est actuellement sur GitHub par la version Home Assistant — le changement côté GitHub affiché dans le diff sera perdu.',
+    confirm_keep_git: 'Accepter le contenu GitHub actuel comme nouvelle référence pour « {target} » ? Rien n\'est envoyé et Home Assistant n\'est pas modifié — si ça diffère toujours ensuite, un envoi normal redevient possible.',
+    write_key_title: "Optionnel : accès en écriture (ha_to_git)",
+    write_key_intro: "Nécessaire uniquement si vous configurez un mapping avec direction: ha_to_git. C'est une clé séparée de celle ci-dessus — la clé en lecture seule n'obtient jamais d'accès écriture, et cette clé reste inactive tant que vous ne l'ajoutez pas vous-même sur GitHub, cette fois en autorisant l'écriture.",
+    setup_write_key_label: "Clé publique en écriture :",
+    conflict_modal_title: "Résoudre",
+    conflict_ha_date: "Home Assistant, dernière modification :",
+    conflict_git_date: "Git, dernier commit :",
+    conflict_keep_git: "Garder la version Git",
+    conflict_force_ha: "Forcer l'envoi Home Assistant → Git",
+    conflict_explain_conflict: "Home Assistant et Git ont tous les deux changé indépendamment depuis la dernière synchro. Regardez la différence ci-dessous, puis choisissez quelle version garder.",
+    conflict_explain_external: "Git a changé en dehors de cet add-on (probablement modifié directement sur GitHub) depuis la dernière synchro. Envoyer maintenant écraserait silencieusement ce changement.",
+    conflict_diff_loading: "Chargement de la différence…",
+    conflict_diff_binary: "Le contenu de ce fichier ne peut pas être affiché en texte.",
+    conflict_diff_too_large: "Ce fichier est trop volumineux pour être prévisualisé ici.",
+    conflict_diff_error: "Impossible de charger la différence : ",
+    conflict_diff_none: "Aucune différence textuelle à afficher.",
     setup_title: "Configuration initiale",
     setup_step1: "Copiez la clé publique ci-dessous.",
     setup_step2: "Sur GitHub, ouvrez les Settings DU DÉPÔT lui-même -> Deploy keys -> Add deploy key (pas les paramètres de votre compte personnel).",
@@ -451,7 +556,7 @@ const STRINGS = {
     field_ha_path: "Chemin Home Assistant", field_git_path: "Chemin Git",
     kind_file: "Fichier", kind_directory: "Dossier (comparaison uniquement)",
     dir_git_to_ha: "Git -> Home Assistant",
-    dir_ha_to_git: "Home Assistant -> Git (bientôt disponible)",
+    dir_ha_to_git: "Home Assistant -> Git",
     dir_bidirectional: "Bidirectionnel (bientôt disponible)",
     browse: "Parcourir…", browse_title: "Parcourir",
     browse_select_here: "Choisir ce dossier",
@@ -619,8 +724,13 @@ function afficherEtat(donnees) {
       verrou.title = t("protected");
       cmpCell.appendChild(verrou);
     }
-    if (fichier.direction !== "git_to_ha") {
+    if (fichier.direction !== "git_to_ha" && fichier.direction !== "ha_to_git") {
       cmpCell.appendChild(badge(t("dir_forbidden"), "blocked"));
+    }
+    if (fichier.direction === "ha_to_git" && fichier.sync_status === "conflict") {
+      cmpCell.appendChild(badge(t("state_conflict"), "blocked"));
+    } else if (fichier.direction === "ha_to_git" && fichier.sync_status === "external") {
+      cmpCell.appendChild(badge(t("state_external"), "blocked"));
     }
     tr.appendChild(cmpCell);
 
@@ -632,6 +742,22 @@ function afficherEtat(donnees) {
       deployBtn.textContent = t("action_deploy");
       deployBtn.addEventListener("click", () => deployerElement(fichier.id, deployBtn));
       gererCell.appendChild(deployBtn);
+    }
+
+    if (fichier.pushable_now) {
+      const pushBtn = document.createElement("button");
+      pushBtn.className = "action-push";
+      pushBtn.textContent = t("action_push");
+      pushBtn.addEventListener("click", () => pousserElement(fichier.id, pushBtn));
+      gererCell.appendChild(pushBtn);
+    }
+
+    if (fichier.direction === "ha_to_git" && (fichier.sync_status === "conflict" || fichier.sync_status === "external")) {
+      const resolveBtn = document.createElement("button");
+      resolveBtn.className = "action-resolve";
+      resolveBtn.textContent = t("action_resolve");
+      resolveBtn.addEventListener("click", () => ouvrirConflitModal(fichier));
+      gererCell.appendChild(resolveBtn);
     }
 
     gererCell.appendChild(construireMenuKebab(fichier));
@@ -883,6 +1009,9 @@ async function chargerEtatSiConfigure() {
   try {
     const setup = await chargerSetup();
 
+    el("setup-key-write").textContent = setup.public_key_write || "—";
+    el("write-key-panel").hidden = false;
+
     if (!setup.configured) {
       el("setup-panel").hidden = false;
       el("dashboard").hidden = true;
@@ -966,6 +1095,145 @@ async function deployerElement(cible, bouton) {
   }
 }
 
+async function pousserElement(cible, bouton) {
+  if (!window.confirm(t("confirm_push").replace("{target}", cible))) return;
+
+  const erreur = el("error");
+  erreur.style.display = "none";
+  bouton.disabled = true;
+  const libelle = bouton.textContent;
+  bouton.textContent = t("pushing");
+
+  try {
+    const reponse = await fetch(`${cheminBaseIngress()}api/deploy`, {
+      method: "POST", cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: cible, force: false }),
+    });
+    const donnees = await reponse.json();
+    if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
+    afficherEtat(donnees);
+  } catch (exception) {
+    erreur.textContent = t("error_push") + exception.message;
+    erreur.style.display = "block";
+    bouton.disabled = false;
+    bouton.textContent = libelle;
+  }
+}
+
+let conflictCibleCourante = null;
+
+function construireLigneDiff(ligne) {
+  const span = document.createElement("span");
+  if (ligne.startsWith("+") && !ligne.startsWith("+++")) {
+    span.className = "diff-add";
+  } else if (ligne.startsWith("-") && !ligne.startsWith("---")) {
+    span.className = "diff-remove";
+  } else if (ligne.startsWith("@@")) {
+    span.className = "diff-hunk";
+  }
+  span.textContent = ligne;
+  return span;
+}
+
+async function ouvrirConflitModal(fichier) {
+  conflictCibleCourante = fichier.id;
+
+  const erreur = el("conflict-error");
+  erreur.style.display = "none";
+
+  el("conflict-explain").textContent =
+    fichier.sync_status === "conflict" ? t("conflict_explain_conflict") : t("conflict_explain_external");
+
+  el("conflict-ha-date").textContent = "…";
+  el("conflict-git-date").textContent = "…";
+
+  const diffEl = el("conflict-diff");
+  diffEl.replaceChildren();
+  diffEl.textContent = t("conflict_diff_loading");
+
+  el("conflict-modal").hidden = false;
+
+  try {
+    const reponse = await fetch(
+      `${cheminBaseIngress()}api/diff?target=${encodeURIComponent(fichier.id)}`,
+      { cache: "no-store" }
+    );
+    const donnees = await reponse.json();
+    if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
+
+    el("conflict-ha-date").textContent = donnees.ha_modified_at || "—";
+    el("conflict-git-date").textContent = donnees.git_committed_at || "—";
+
+    diffEl.replaceChildren();
+
+    if (donnees.binary) {
+      diffEl.textContent = t("conflict_diff_binary");
+    } else if (donnees.too_large) {
+      diffEl.textContent = t("conflict_diff_too_large");
+    } else if (!donnees.diff) {
+      diffEl.textContent = t("conflict_diff_none");
+    } else {
+      for (const ligne of donnees.diff.split("\n").filter((l) => l.length > 0)) {
+        diffEl.appendChild(construireLigneDiff(ligne));
+      }
+    }
+  } catch (exception) {
+    diffEl.textContent = "";
+    erreur.textContent = t("conflict_diff_error") + exception.message;
+    erreur.style.display = "block";
+  }
+}
+
+function fermerConflitModal() {
+  el("conflict-modal").hidden = true;
+  conflictCibleCourante = null;
+}
+
+async function resoudreForcer() {
+  if (!conflictCibleCourante) return;
+  if (!window.confirm(t("confirm_force_push").replace("{target}", conflictCibleCourante))) return;
+
+  const erreur = el("conflict-error");
+
+  try {
+    const reponse = await fetch(`${cheminBaseIngress()}api/deploy`, {
+      method: "POST", cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: conflictCibleCourante, force: true }),
+    });
+    const donnees = await reponse.json();
+    if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
+    fermerConflitModal();
+    afficherEtat(donnees);
+  } catch (exception) {
+    erreur.textContent = t("error_push") + exception.message;
+    erreur.style.display = "block";
+  }
+}
+
+async function resoudreAcquitter() {
+  if (!conflictCibleCourante) return;
+  if (!window.confirm(t("confirm_keep_git").replace("{target}", conflictCibleCourante))) return;
+
+  const erreur = el("conflict-error");
+
+  try {
+    const reponse = await fetch(`${cheminBaseIngress()}api/acknowledge-git`, {
+      method: "POST", cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: conflictCibleCourante }),
+    });
+    const donnees = await reponse.json();
+    if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
+    fermerConflitModal();
+    afficherEtat(donnees);
+  } catch (exception) {
+    erreur.textContent = t("error_acknowledge") + exception.message;
+    erreur.style.display = "block";
+  }
+}
+
 async function copierCle() {
   const bouton = el("copy-key");
   const cle = el("setup-key").textContent;
@@ -988,9 +1256,37 @@ async function copierCle() {
   }, 1500);
 }
 
+async function copierCleEcriture() {
+  const bouton = el("copy-key-write");
+  const cle = el("setup-key-write").textContent;
+
+  if (!cle || cle === "—") return;
+
+  try {
+    await navigator.clipboard.writeText(cle);
+  } catch (exception) {
+    return;
+  }
+
+  const libelle = bouton.textContent;
+  bouton.textContent = t("copied_key");
+  bouton.disabled = true;
+
+  setTimeout(() => {
+    bouton.textContent = libelle;
+    bouton.disabled = false;
+  }, 1500);
+}
+
 el("lang-toggle").addEventListener("click", switchLang);
 el("refresh").addEventListener("click", actualiserGit);
 el("copy-key").addEventListener("click", copierCle);
+el("copy-key-write").addEventListener("click", copierCleEcriture);
+
+el("conflict-modal-close").addEventListener("click", fermerConflitModal);
+el("conflict-cancel").addEventListener("click", fermerConflitModal);
+el("conflict-force-ha").addEventListener("click", resoudreForcer);
+el("conflict-keep-git").addEventListener("click", resoudreAcquitter);
 
 el("add-mapping").addEventListener("click", () => ouvrirModalMapping(null));
 el("mapping-modal-close").addEventListener("click", fermerModalMapping);
@@ -1094,6 +1390,14 @@ def construire_setup() -> dict:
         except Exception:
             public_key = None
 
+    public_key_write = None
+
+    if SSH_PUBLIC_KEY_WRITE.is_file():
+        try:
+            public_key_write = SSH_PUBLIC_KEY_WRITE.read_text(encoding="utf-8").strip()
+        except Exception:
+            public_key_write = None
+
     config_url = None
 
     if not repo:
@@ -1109,6 +1413,7 @@ def construire_setup() -> dict:
         "github_repository": repo,
         "github_branch": options.get("github_branch") or "main",
         "public_key": public_key,
+        "public_key_write": public_key_write,
         "config_url": config_url,
     }
 
@@ -1255,6 +1560,120 @@ def gerer_browse(handler: "InterfaceHandler") -> None:
 
 
 ###############################################################################
+# DIFF (ha_to_git conflict resolution)
+#
+# The one endpoint that ever sends real file content to the browser,
+# strictly scoped to a single narrow purpose: helping a user decide which
+# side to keep when a ha_to_git mapping shows "conflict" or "external".
+# Refuses anything else (wrong direction, wrong kind) rather than
+# becoming a general "view file content" feature, skips binary content,
+# and caps how much it will ever read per side.
+###############################################################################
+
+def formater_date_commit_git(git_path_relatif: str) -> str | None:
+
+    resultat = subprocess.run(
+        ["git", "-C", str(GIT_ROOT), "log", "-1", "--format=%cI", "--", git_path_relatif],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+
+    if resultat.returncode != 0:
+        return None
+
+    return resultat.stdout.strip() or None
+
+
+def gerer_diff(handler: "InterfaceHandler") -> None:
+
+    requete = urllib.parse.urlsplit(handler.path)
+    parametres = urllib.parse.parse_qs(requete.query)
+    cible = (parametres.get("target") or [""])[0]
+
+    if not cible:
+        handler.repondre_json(400, {"ok": False, "error": "missing target"})
+        return
+
+    module, erreur_chargement = charger_gestionnaire()
+
+    if module is None:
+        handler.repondre_json(503, {"ok": False, "error": erreur_chargement})
+        return
+
+    elements_par_id = {element["id"]: element for element in module.elements}
+    element = elements_par_id.get(cible)
+
+    if element is None:
+        handler.repondre_json(404, {"ok": False, "error": "unmanaged element"})
+        return
+
+    if element["direction"] != "ha_to_git" or element["kind"] != "file":
+        handler.repondre_json(
+            400, {"ok": False, "error": "diff is only available for ha_to_git file mappings"}
+        )
+        return
+
+    try:
+        chemin_ha = module.convertir_chemin_ha(element["ha_path"])
+        chemin_git = module.convertir_chemin_git(element["git_path"])
+        module.verifier_chemin_resolu(chemin_ha, module.HA_ROOT, "/homeassistant")
+        module.verifier_chemin_resolu(chemin_git, module.GIT_ROOT, "/data/repository")
+    except ValueError as exc:
+        handler.repondre_json(400, {"ok": False, "error": str(exc)})
+        return
+
+    ha_existe = chemin_ha.exists() and chemin_ha.is_file()
+    git_existe = chemin_git.exists() and chemin_git.is_file()
+
+    reponse = {
+        "ok": True,
+        "sync_status": module.etats_synchro.get(cible, "clean"),
+        "ha_modified_at": (
+            datetime.fromtimestamp(chemin_ha.stat().st_mtime, tz=timezone.utc).isoformat(timespec="seconds")
+            if ha_existe else None
+        ),
+        "git_committed_at": (
+            formater_date_commit_git(element["git_path"]) if git_existe else None
+        ),
+        "binary": False,
+        "too_large": False,
+        "diff": "",
+    }
+
+    if not ha_existe or not git_existe:
+        handler.repondre_json(200, reponse)
+        return
+
+    if chemin_ha.stat().st_size > DIFF_MAX_BYTES or chemin_git.stat().st_size > DIFF_MAX_BYTES:
+        reponse["too_large"] = True
+        handler.repondre_json(200, reponse)
+        return
+
+    contenu_ha = chemin_ha.read_bytes()
+    contenu_git = chemin_git.read_bytes()
+
+    if not module.est_fichier_texte(chemin_ha, contenu_ha) or not module.est_fichier_texte(chemin_git, contenu_git):
+        reponse["binary"] = True
+        handler.repondre_json(200, reponse)
+        return
+
+    lignes_ha = contenu_ha.decode("utf-8", errors="replace").splitlines(keepends=True)
+    lignes_git = contenu_git.decode("utf-8", errors="replace").splitlines(keepends=True)
+
+    reponse["diff"] = "".join(difflib.unified_diff(
+        lignes_git, lignes_ha,
+        fromfile=f"git:{element['git_path']}",
+        tofile=f"ha:{element['ha_path']}",
+        n=3,
+    ))
+
+    handler.repondre_json(200, reponse)
+
+
+###############################################################################
 # MAPPINGS: WRITE
 #
 # The one place this add-on writes to its own configuration. Until now,
@@ -1336,10 +1755,11 @@ def valider_mappings_proposes(module, mappings_proposes: list) -> list:
         chemin_git = module.convertir_chemin_git(git_path)
         module.verifier_chemin_resolu(chemin_git, module.GIT_ROOT, "/data/repository")
 
-        if kind == "file" and module.est_chemin_protege(chemin_ha):
+        if kind == "file" and direction == "git_to_ha" and module.est_chemin_protege(chemin_ha):
             raise ValueError(
                 f"{element_id}: this is a core Home Assistant config file "
-                "and can never be managed by a mapping"
+                "and can never be deployed to via git_to_ha (it can still "
+                "be tracked read-only, e.g. with direction: ha_to_git)"
             )
 
         # A mapping's ha_path/git_path are picked independently (two
@@ -1654,7 +2074,56 @@ def declencher_rafraichissement_git() -> tuple[bool, str | None]:
 # because the browser button already required an explicit confirm().
 ###############################################################################
 
-def declencher_deploiement(cible: object) -> tuple[bool, str | None]:
+def declencher_deploiement(cible: object, forcer: object = False) -> tuple[bool, str | None]:
+
+    if not isinstance(cible, str) or not cible:
+        return False, "invalid target"
+
+    if not isinstance(forcer, bool):
+        return False, "invalid force flag"
+
+    module, erreur_chargement = charger_gestionnaire()
+
+    if module is None:
+        return False, erreur_chargement
+
+    sortie_capturee = io.StringIO()
+
+    try:
+
+        with (
+            contextlib.redirect_stdout(sortie_capturee),
+            contextlib.redirect_stderr(sortie_capturee),
+        ):
+
+            module.deployer_element(cible, True, forcer)
+
+    except SystemExit as exc:
+
+        message = sortie_capturee.getvalue().strip()
+
+        print(sortie_capturee.getvalue(), end="", flush=True)
+
+        return False, message or f"deployment refused (see add-on logs): code {exc.code}"
+
+    except Exception as exc:
+        print(sortie_capturee.getvalue(), end="", flush=True)
+        return False, f"{type(exc).__name__}: {exc}"
+
+    print(sortie_capturee.getvalue(), end="", flush=True)
+    return True, None
+
+
+###############################################################################
+# ACKNOWLEDGE GIT (ha_to_git conflict/external resolution)
+#
+# Accepts the Git side's current content as the new reference point,
+# without pushing anything and without touching Home Assistant. Calls
+# gestionnaire.acquitter_git(target) directly — the same "single
+# implementation of the rules" principle as every other write path here.
+###############################################################################
+
+def declencher_acquittement_git(cible: object) -> tuple[bool, str | None]:
 
     if not isinstance(cible, str) or not cible:
         return False, "invalid target"
@@ -1673,7 +2142,7 @@ def declencher_deploiement(cible: object) -> tuple[bool, str | None]:
             contextlib.redirect_stderr(sortie_capturee),
         ):
 
-            module.deployer_element(cible, True)
+            module.acquitter_git(cible)
 
     except SystemExit as exc:
 
@@ -1681,7 +2150,7 @@ def declencher_deploiement(cible: object) -> tuple[bool, str | None]:
 
         print(sortie_capturee.getvalue(), end="", flush=True)
 
-        return False, message or f"deployment refused (see add-on logs): code {exc.code}"
+        return False, message or f"acknowledge refused (see add-on logs): code {exc.code}"
 
     except Exception as exc:
         print(sortie_capturee.getvalue(), end="", flush=True)
@@ -1725,6 +2194,17 @@ def construire_etat() -> dict:
             and etat in {"different", "missing_ha"}
         )
 
+        sync_status = None
+        pushable_now = False
+
+        if direction == "ha_to_git":
+            sync_status = gestionnaire.etats_synchro.get(element_id, "clean")
+            pushable_now = (
+                kind != "directory"
+                and sync_status == "clean"
+                and etat in {"different", "missing_git"}
+            )
+
         fichiers.append(
             {
                 "id": element_id,
@@ -1733,6 +2213,8 @@ def construire_etat() -> dict:
                 "state": etat,
                 "protected": protege,
                 "deployable_now": deployable_now,
+                "sync_status": sync_status,
+                "pushable_now": pushable_now,
                 "ha_path": element["ha_path"],
                 "git_path": element["git_path"],
             }
@@ -1760,7 +2242,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/1.0.0"
+    server_version = "HomelabGitManagement/1.1.0"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 
@@ -1816,6 +2298,10 @@ class InterfaceHandler(BaseHTTPRequestHandler):
             gerer_browse(self)
             return
 
+        if chemin.endswith("/api/diff"):
+            gerer_diff(self)
+            return
+
         if chemin.endswith("/health"):
             self.envoyer_entetes(200, "application/json; charset=utf-8")
             self.wfile.write(b'{"status":"ok"}')
@@ -1854,8 +2340,33 @@ class InterfaceHandler(BaseHTTPRequestHandler):
                 charge = {}
 
             cible = charge.get("target") if isinstance(charge, dict) else None
+            forcer = charge.get("force", False) if isinstance(charge, dict) else False
 
-            succes, message_erreur = declencher_deploiement(cible)
+            succes, message_erreur = declencher_deploiement(cible, forcer)
+
+            if not succes:
+                self.repondre_json(502, {"ok": False, "error": message_erreur})
+                return
+
+            donnees = construire_etat()
+            self.repondre_json(200 if donnees.get("ok") else 503, donnees)
+            return
+
+        if chemin.endswith("/api/acknowledge-git"):
+
+            corps_requete = self.lire_corps_borne(REQUEST_PAYLOAD_MAX_BYTES)
+
+            if corps_requete is None:
+                return
+
+            try:
+                charge = json.loads(corps_requete)
+            except json.JSONDecodeError:
+                charge = {}
+
+            cible = charge.get("target") if isinstance(charge, dict) else None
+
+            succes, message_erreur = declencher_acquittement_git(cible)
 
             if not succes:
                 self.repondre_json(502, {"ok": False, "error": message_erreur})

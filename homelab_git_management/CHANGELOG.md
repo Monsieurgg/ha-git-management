@@ -2,6 +2,40 @@
 
 All notable changes to this add-on are documented here.
 
+## 1.1.0 — ha_to_git
+
+- New: `direction: ha_to_git` is now implemented. A mapping configured
+  this way can push the current Home Assistant file to GitHub, as a real
+  commit, after explicit confirmation — the reverse of the existing
+  `git_to_ha` deployment.
+- A second, entirely separate SSH Deploy Key is generated for this
+  (`/data/ssh/github_deploy_key_write`), shown in its own section of the
+  Ingress UI. The original read-only key is completely unchanged and is
+  never used by any write path — ha_to_git stays inactive until this new
+  key is explicitly added on GitHub with write access enabled.
+- Safety against silently discarding an external edit: the add-on now
+  remembers, per mapping, what each side looked like the last time they
+  were confirmed in agreement (`/data/sync-state.json`). If Git changed
+  outside this add-on since then (most likely edited directly on GitHub)
+  while Home Assistant also changed, that is a real conflict — the Push
+  button is replaced with a "Resolve" button showing both sides' dates
+  and a line-by-line difference, and the push is blocked until a human
+  either force-pushes the Home Assistant version or accepts the current
+  Git content as the new reference point. A plain "most recent wins"
+  comparison cannot make this distinction and can silently overwrite a
+  real edit — this add-on never does that.
+- The diff view (in that Resolve screen only) is the one place this
+  add-on now shows real file content, instead of only comparison
+  metadata — scoped strictly to ha_to_git conflicts, capped in size, and
+  skipped entirely for binary content. DOCS.md documents this exception
+  explicitly.
+- `configuration.yaml` / `scripts.yaml` / `automations.yaml` /
+  `scenes.yaml` can now be mapped with `direction: ha_to_git` (read-only
+  from Home Assistant's side, so the existing protection — which is only
+  about never writing back to these files — does not apply here); they
+  remain permanently blocked from `git_to_ha` deployment as before.
+- No change to git_to_ha, comparison, backup or rollback behavior.
+
 ## 1.0.0 — First stable public release
 
 - README rewritten in French (primary, shown by default on GitHub) with an

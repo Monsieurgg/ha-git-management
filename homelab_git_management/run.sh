@@ -19,12 +19,17 @@
 #   - start the Ingress interface.
 #
 # Security:
-#   - the private Deploy Key only ever lives under /data/ssh, a
+#   - both private Deploy Keys only ever live under /data/ssh, a
 #     persistent volume outside the image, generated at runtime — never
 #     baked into the image, never transmitted anywhere by this add-on;
-#   - only the *public* key is ever displayed (Ingress UI and logs);
-#   - StrictHostKeyChecking is enforced, GitHub's host key is pinned;
-#   - GitHub is only ever reached read-only through this Deploy Key;
+#   - only the *public* halves are ever displayed (Ingress UI and logs);
+#   - StrictHostKeyChecking is enforced, GitHub's host key is pinned, for
+#     both keys;
+#   - the first (read-only) key is used by every comparison and by
+#     git_to_ha; the second, entirely separate key is the only one ever
+#     used to push (ha_to_git) — read-only code paths never reference it,
+#     and it grants nothing until explicitly added to GitHub with write
+#     access enabled;
 #   - fast-forward only Git updates; a modified local clone is refused;
 #   - all deployments to Home Assistant remain the exclusive
 #     responsibility of gestionnaire.py, gated on user confirmation.
@@ -33,13 +38,13 @@
 
 set -e
 
-APP_VERSION="1.0.0"
+APP_VERSION="1.1.0"
 
 export APP_VERSION
 
 echo "[homelab-git-management] Starting"
 echo "[homelab-git-management] Application: ${APP_VERSION}"
-echo "[homelab-git-management] GitHub write access: disabled"
+echo "[homelab-git-management] GitHub write access: only via a separate write key, only for mappings explicitly configured with ha_to_git"
 echo "[homelab-git-management] Home Assistant write access: only on explicit confirmation"
 
 ###############################################################################
@@ -136,6 +141,46 @@ if ! ssh-keygen -y -f "$SSH_PRIVATE_KEY" >/dev/null 2>&1; then
 fi
 
 echo "[homelab-git-management] Deploy Key: OK (public key available in the Ingress UI)"
+
+###############################################################################
+# WRITE-CAPABLE DEPLOY KEY (ha_to_git)
+#
+# A second, entirely separate keypair — never used by any read-only code
+# path (comparison, git_to_ha, the initial GitHub access test just below).
+# Generated unconditionally like the one above, so the setup screen can
+# always show its public half, but it grants no access at all until a
+# user explicitly adds it on GitHub with write access enabled: unlike the
+# key above, this one is deliberately NOT added automatically to anything
+# — ha_to_git mappings simply fail with a clear error until it is.
+###############################################################################
+
+SSH_PRIVATE_KEY_WRITE="${SSH_DIR}/github_deploy_key_write"
+SSH_PUBLIC_KEY_WRITE="${SSH_PRIVATE_KEY_WRITE}.pub"
+
+if [ -L "$SSH_PRIVATE_KEY_WRITE" ] || [ -L "$SSH_PUBLIC_KEY_WRITE" ]; then
+    bashio::exit.nok "Write Deploy Key files must not be symlinks"
+fi
+
+if [ ! -e "$SSH_PRIVATE_KEY_WRITE" ]; then
+
+    echo "[homelab-git-management] Generating write-capable Deploy Key (for ha_to_git)..."
+
+    (
+        umask 077
+        ssh-keygen -q -t ed25519 -N "" -C "homelab-git-management-write" -f "$SSH_PRIVATE_KEY_WRITE"
+    )
+
+fi
+
+chown root:root "$SSH_PRIVATE_KEY_WRITE" "$SSH_PUBLIC_KEY_WRITE"
+chmod 600 "$SSH_PRIVATE_KEY_WRITE"
+chmod 644 "$SSH_PUBLIC_KEY_WRITE"
+
+if ! ssh-keygen -y -f "$SSH_PRIVATE_KEY_WRITE" >/dev/null 2>&1; then
+    bashio::exit.nok "Invalid write Deploy Key private key"
+fi
+
+echo "[homelab-git-management] Write Deploy Key: OK (inactive until added to GitHub with write access — see the setup screen)"
 
 ###############################################################################
 # OPTIONS

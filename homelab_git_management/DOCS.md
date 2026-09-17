@@ -30,7 +30,7 @@ Each entry under `mappings`:
 | `kind` | `file` \| `directory` | Defaults to `file`. Directories can be compared but not deployed. |
 | `ha_path` | string | Absolute path under `/config`. |
 | `git_path` | string | Path relative to the repository root. |
-| `direction` | `git_to_ha` \| `ha_to_git` \| `bidirectional` | Only `git_to_ha` is implemented; the other two are accepted by validation but make the add-on refuse to start, with an explicit error naming the offending mapping. |
+| `direction` | `git_to_ha` \| `ha_to_git` \| `bidirectional` | `git_to_ha` and `ha_to_git` are both implemented. `bidirectional` is accepted by validation but makes the add-on refuse to start, with an explicit error naming the offending mapping. |
 
 ## Managing mappings from the dashboard
 
@@ -64,6 +64,49 @@ brief "restarting" overlay and recovers on its own. This uses the same
 "self"-scoped Supervisor API (`/addons/self/restart`): it can only ever
 restart this add-on, never another one or Home Assistant itself.
 
+## Pushing Home Assistant changes to Git (ha_to_git)
+
+A mapping configured with `direction: ha_to_git` does the reverse of the
+default direction: it can push the current Home Assistant file to your
+GitHub repository, as a real commit, after explicit confirmation.
+
+**A second, separate Deploy Key.** This needs write access, which the
+original (read-only) Deploy Key deliberately never has. On first start,
+the add-on generates a second, entirely independent SSH keypair for this,
+shown in its own section of the Ingress UI ("Optional: write access").
+Nothing changes about the original key, and no read-only code path
+(comparison, `git_to_ha`) ever references the write-capable key. Until
+you explicitly add this second public key on GitHub — this time allowing
+write access — every `ha_to_git` mapping simply fails with a clear error.
+
+**Conflict safety.** Because Git can now change from two places (a
+`git_to_ha`/comparison read, and a direct edit on GitHub itself), the
+add-on tracks, per `ha_to_git` mapping, what each side looked like the
+last time they were confirmed in agreement
+(`/data/sync-state.json`). This is what lets it tell apart "only Home
+Assistant changed since" (safe to push) from "Git also changed
+independently" (a real conflict) — a plain "most recent timestamp wins"
+comparison cannot make that distinction, and could silently overwrite a
+real edit made directly on GitHub. When a real conflict is detected, the
+Push button is replaced with a **Resolve** button, which shows:
+
+- when each side was last modified (Home Assistant's file mtime, Git's
+  last commit date for that path);
+- a line-by-line difference between the two versions;
+- two resolutions: **force-push** the Home Assistant version (deliberately
+  discarding the GitHub-side change), or **keep the Git version**
+  (accepts GitHub's current content as the new reference point — nothing
+  is pushed and Home Assistant is not touched; if the two still differ
+  afterward, that shows up as a normal, safe-to-push difference again).
+
+**The one exception to "no file content is ever shown."** The Resolve
+screen above is the single place in this add-on where real file content
+reaches the browser, instead of only comparison metadata. It is scoped
+narrowly: only for `ha_to_git` mappings in a blocked state, capped in
+size, and skipped entirely (a "cannot preview" message instead) for
+binary content. This content never leaves your own authenticated Ingress
+session — see **Exposure and authentication** below.
+
 ## Exposure and authentication
 
 This add-on has no LAN port of its own (`ingress: true` with no `ports:`
@@ -96,7 +139,10 @@ written or deployed.
 
 `configuration.yaml`, `scripts.yaml`, `automations.yaml` and `scenes.yaml`
 under `/config` can never be deployed to by this add-on, even if you map
-them with `direction: git_to_ha`. They can still be mapped for comparison.
+them with `direction: git_to_ha`. They can still be mapped for comparison,
+and for `direction: ha_to_git` — that direction only ever reads them, it
+never writes to Home Assistant, so the protection (which is specifically
+about never overwriting these files) does not apply to it.
 
 ## Deployment safety
 
