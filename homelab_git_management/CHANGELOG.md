@@ -2,6 +2,23 @@
 
 All notable changes to this add-on are documented here.
 
+## 1.6.0 — visible, one-click direction column
+
+- The "Managed elements" table now shows each mapping's `direction`
+  directly as its own column, instead of it only being visible by
+  opening the Edit dialog. Changing it is now a single dropdown on the
+  row itself, saved immediately — no need to open the full mapping form
+  for something this small.
+- This still goes through the exact same save path as the Edit dialog
+  (`/api/mappings`, the same validation, the same automatic-restart
+  fallback if the change isn't visible fast enough) — nothing new on the
+  backend, just a faster way to reach an action that already existed.
+  Every other field of the mapping (paths, protection) is carried over
+  unchanged.
+- If the save fails for any reason, the dropdown reverts to its previous
+  value and the error is shown, instead of silently drifting from what
+  is actually saved.
+
 ## 1.5.0 — manual compare & force for bidirectional mappings
 
 - New kebab-menu action, "Compare & force a version", for any

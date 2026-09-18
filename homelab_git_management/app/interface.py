@@ -111,6 +111,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 .action-deploy { margin-right: 6px; padding: 4px 10px; font-size: 12px; border-color: var(--candidate); color: var(--candidate); }
 .action-push { margin-right: 6px; padding: 4px 10px; font-size: 12px; border-color: var(--accent); color: var(--accent); }
 .action-resolve { margin-right: 6px; padding: 4px 10px; font-size: 12px; border-color: var(--danger); color: var(--danger); }
+.direction-select { padding: 4px 8px; font-size: 12px; border-radius: 8px; }
 .summary { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 12px; margin-bottom: 18px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 15px; box-shadow: var(--shadow); }
 .card-label { color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
@@ -311,6 +312,7 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
               <th data-i18n="th_element">Element</th>
               <th data-i18n="th_ha_path">HA path</th>
               <th data-i18n="th_git_path">Git path</th>
+              <th data-i18n="th_direction">Direction</th>
               <th data-i18n="th_comparison">Comparison</th>
               <th data-i18n="th_manage">Manage</th>
             </tr>
@@ -487,7 +489,7 @@ const STRINGS = {
     copy_key: "Copy", copied_key: "Copied!",
     setup_open_config: "Open the Configuration tab →",
     mappings_add: "+ Add a mapping",
-    th_ha_path: "HA path", th_git_path: "Git path", th_manage: "Manage",
+    th_ha_path: "HA path", th_git_path: "Git path", th_direction: "Direction", th_manage: "Manage",
     mapping_edit: "Edit", mapping_delete: "Delete", mapping_normalize: "Make identical",
     mapping_compare_force: "Compare & force a version",
     mapping_modal_add: "Add a mapping", mapping_modal_edit: "Edit mapping",
@@ -506,6 +508,7 @@ const STRINGS = {
     mapping_error_incomplete: "Please fill in the identifier, the HA path and the Git path.",
     mapping_confirm_delete: 'Delete mapping "{id}"?\n\nThis only removes it from the configuration — no file is touched.',
     mapping_error_delete: "Could not delete: ",
+    mapping_error_direction: "Could not change direction: ",
     restart_overlay_text: "Applying your change — the add-on is restarting…",
     restart_overlay_timeout: "This is taking longer than expected. Try reloading this page in a moment.",
   },
@@ -569,7 +572,7 @@ const STRINGS = {
     setup_none: "non défini",
     setup_open_config: "Ouvrir l'onglet Configuration →",
     mappings_add: "+ Ajouter un mapping",
-    th_ha_path: "Chemin HA", th_git_path: "Chemin Git", th_manage: "Gérer",
+    th_ha_path: "Chemin HA", th_git_path: "Chemin Git", th_direction: "Direction", th_manage: "Gérer",
     mapping_edit: "Modifier", mapping_delete: "Supprimer", mapping_normalize: "Rendre identique",
     mapping_compare_force: "Comparer et forcer une version",
     mapping_modal_add: "Ajouter un mapping", mapping_modal_edit: "Modifier le mapping",
@@ -588,6 +591,7 @@ const STRINGS = {
     mapping_error_incomplete: "Merci de renseigner l'identifiant, le chemin HA et le chemin Git.",
     mapping_confirm_delete: 'Supprimer le mapping « {id} » ?\n\nCela retire uniquement la configuration — aucun fichier n\'est touché.',
     mapping_error_delete: "Impossible de supprimer : ",
+    mapping_error_direction: "Impossible de changer la direction : ",
     restart_overlay_text: "Application du changement — l'add-on redémarre…",
     restart_overlay_timeout: "C'est plus long que prévu. Essaie de recharger cette page dans un instant.",
   },
@@ -755,6 +759,22 @@ function afficherEtat(donnees) {
     const gitCell = document.createElement("td");
     gitCell.textContent = fichier.git_path;
     tr.appendChild(gitCell);
+
+    const dirCell = document.createElement("td");
+    const dirSelect = document.createElement("select");
+    dirSelect.className = "direction-select";
+    for (const valeur of ["git_to_ha", "ha_to_git", "bidirectional"]) {
+      const option = document.createElement("option");
+      option.value = valeur;
+      option.textContent = t(`dir_${valeur}`);
+      if (valeur === fichier.direction) option.selected = true;
+      dirSelect.appendChild(option);
+    }
+    dirSelect.addEventListener("change", () =>
+      changerDirection(fichier.id, dirSelect.value, dirSelect, fichier.direction)
+    );
+    dirCell.appendChild(dirSelect);
+    tr.appendChild(dirCell);
 
     const cmpCell = document.createElement("td");
     cmpCell.appendChild(badgeEtat(fichier.state));
@@ -964,6 +984,38 @@ async function sauvegarderMapping() {
     erreur.style.display = "block";
   } finally {
     boutonSave.disabled = false;
+  }
+}
+
+async function changerDirection(id, nouvelleDirection, selectEl, directionPrecedente) {
+  const erreur = el("error");
+  erreur.style.display = "none";
+  selectEl.disabled = true;
+
+  const listeExistante = copierMappingsPourEnvoi();
+  const nouvelleListe = listeExistante.map((mapping) =>
+    mapping.id === id ? { ...mapping, direction: nouvelleDirection } : mapping
+  );
+
+  try {
+    const reponse = await fetch(`${cheminBaseIngress()}api/mappings`, {
+      method: "POST", cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mappings: nouvelleListe }),
+    });
+    const donnees = await reponse.json();
+    if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
+
+    if (donnees.restarting) {
+      attendreRedemarrage();
+    } else {
+      afficherEtat(donnees);
+    }
+  } catch (exception) {
+    erreur.textContent = t("mapping_error_direction") + exception.message;
+    erreur.style.display = "block";
+    selectEl.value = directionPrecedente;
+    selectEl.disabled = false;
   }
 }
 
@@ -2488,7 +2540,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/1.5.0"
+    server_version = "HomelabGitManagement/1.6.0"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 

@@ -65,6 +65,16 @@ brief "restarting" overlay and recovers on its own. This uses the same
 "self"-scoped Supervisor API (`/addons/self/restart`): it can only ever
 restart this add-on, never another one or Home Assistant itself.
 
+Each mapping's `direction` is also shown directly as its own column in
+the table, with a dropdown right there to change it in one step — no
+need to open the full Edit dialog just to switch a mapping between
+`git_to_ha`, `ha_to_git` and `bidirectional`. It goes through the exact
+same save path as the Edit dialog (same validation, same
+automatic-restart fallback above), just reached faster; every other
+field of the mapping stays as it was. A failed save reverts the dropdown
+to its previous value rather than leaving it showing something that
+wasn't actually saved.
+
 ## Pushing Home Assistant changes to Git (ha_to_git)
 
 A mapping configured with `direction: ha_to_git` does the reverse of the
