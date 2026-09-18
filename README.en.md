@@ -2,9 +2,9 @@
 
 🇫🇷 [Version française](README.md)
 
-Controlled, one-way (for now) sync between a GitHub repository and your Home
-Assistant configuration: clone → compare → review → confirm → deploy →
-verify → automatic rollback on failure.
+Controlled, one-way or two-way sync between a GitHub repository and your
+Home Assistant configuration: clone → compare → review → confirm →
+deploy/push → verify → automatic rollback on failure.
 
 [![Buy me a beer](https://img.shields.io/badge/Buy%20me%20a%20beer-%F0%9F%8D%BA-orange?style=for-the-badge)](https://www.buymeacoffee.com/Monsieurgg)
 
@@ -98,7 +98,7 @@ mappings:
     kind: file            # "file" (default) or "directory"
     ha_path: /config/dashboard.yaml
     git_path: home-assistant/dashboard.yaml
-    direction: git_to_ha   # the only direction implemented today
+    direction: git_to_ha   # git_to_ha, ha_to_git, or bidirectional
 ```
 
 - `id`: a short identifier, letters/digits/`_`/`-` only, used as the

@@ -2,10 +2,10 @@
 
 🇬🇧 [English version](README.en.md)
 
-Synchronisation contrôlée, à sens unique (pour l'instant), entre un dépôt
-GitHub et votre configuration Home Assistant : clone → comparaison →
-revue → confirmation → déploiement → vérification → rollback automatique
-en cas d'échec.
+Synchronisation contrôlée, à sens unique ou bidirectionnelle, entre un
+dépôt GitHub et votre configuration Home Assistant : clone → comparaison
+→ revue → confirmation → déploiement/envoi → vérification → rollback
+automatique en cas d'échec.
 
 [![Buy me a beer](https://img.shields.io/badge/Buy%20me%20a%20beer-%F0%9F%8D%BA-orange?style=for-the-badge)](https://www.buymeacoffee.com/Monsieurgg)
 
@@ -105,7 +105,7 @@ mappings:
     kind: file            # "file" (par défaut) ou "directory"
     ha_path: /config/dashboard.yaml
     git_path: home-assistant/dashboard.yaml
-    direction: git_to_ha   # la seule direction implémentée à ce jour
+    direction: git_to_ha   # git_to_ha, ha_to_git, ou bidirectional
 ```
 
 - `id` : un identifiant court, lettres/chiffres/`_`/`-` uniquement, utilisé

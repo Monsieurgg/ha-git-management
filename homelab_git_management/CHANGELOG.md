@@ -2,6 +2,21 @@
 
 All notable changes to this add-on are documented here.
 
+## 2.0.0 — full two-way sync, general availability
+
+This release marks the merge of the full two-way sync feature set into
+`main`: everything from 1.1.0 through 1.6.0 below, now considered
+stable and generally available rather than in-progress work on a
+feature branch. No behavior changes over 1.6.0 — this is a version
+milestone, not a new feature on its own. In short, since the last
+release on `main` (1.0.0): `ha_to_git` and `bidirectional` sync
+directions (with a dedicated write-capable Deploy Key and
+reference-based conflict detection), a line-ending safety guard,
+per-mapping configurable protection, a "Make identical" action for
+formatting-only differences, a "Compare & force a version" escape
+hatch for bidirectional mappings blocked outside a detected conflict,
+and a one-click Direction column. See each version below for detail.
+
 ## 1.6.0 — visible, one-click direction column
 
 - The "Managed elements" table now shows each mapping's `direction`
