@@ -169,6 +169,24 @@ silently discard a real change on either side.
   available — Deploy (writing them from Git) remains permanently
   blocked, exactly as for `git_to_ha`.
 
+**Manually comparing and forcing outside a detected conflict.** A normal
+Push can still be blocked for a reason that has nothing to do with a
+two-sided conflict — most commonly, the line-ending safety guard
+(see above): the sync tracker correctly sees only Home Assistant changed
+(`ha_ahead`), yet the push itself refuses because the Home Assistant
+file's line endings no longer match what's tracked in Git. For exactly
+this situation, the "⋮" menu offers **Compare & force a version** for
+any `bidirectional` mapping that is currently "different" (or missing on
+one side) and not already flagged as a conflict. It opens the same
+dated, line-by-line diff screen as the automatic Resolve button, with
+the same two resolutions — force-push or force-deploy — so you can
+either fix the underlying issue (e.g. the line endings) and retry
+normally, or deliberately discard one side and take the other without
+waiting for the tracker to call it a conflict. Once a mapping is
+genuinely flagged CONFLICT, this same screen is already reachable
+through the automatic Resolve button, so the kebab entry doesn't appear
+twice for it.
+
 ## Exposure and authentication
 
 This add-on has no LAN port of its own (`ingress: true` with no `ports:`

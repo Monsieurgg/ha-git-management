@@ -469,6 +469,7 @@ const STRINGS = {
     conflict_force_ha: "Force-push Home Assistant → Git",
     conflict_explain_conflict: "Both Home Assistant and Git changed independently since the last sync. Review the difference below, then choose which version to keep.",
     conflict_explain_external: "Git changed outside this add-on (most likely edited directly on GitHub) since the last sync. Pushing now would silently discard that edit.",
+    conflict_explain_manual: "Manual comparison: review the difference below, then choose which version to keep. Useful when a normal Push or Deploy is blocked for another reason (for example a line-ending mismatch) and you want to force one side anyway.",
     conflict_diff_loading: "Loading the difference…",
     conflict_diff_binary: "This file's content cannot be shown as text.",
     conflict_diff_too_large: "This file is too large to preview here.",
@@ -488,6 +489,7 @@ const STRINGS = {
     mappings_add: "+ Add a mapping",
     th_ha_path: "HA path", th_git_path: "Git path", th_manage: "Manage",
     mapping_edit: "Edit", mapping_delete: "Delete", mapping_normalize: "Make identical",
+    mapping_compare_force: "Compare & force a version",
     mapping_modal_add: "Add a mapping", mapping_modal_edit: "Edit mapping",
     field_id: "Identifier", field_kind: "Type", field_direction: "Direction",
     field_ha_path: "Home Assistant path", field_git_path: "Git path",
@@ -549,6 +551,7 @@ const STRINGS = {
     conflict_force_ha: "Forcer l'envoi Home Assistant → Git",
     conflict_explain_conflict: "Home Assistant et Git ont tous les deux changé indépendamment depuis la dernière synchro. Regardez la différence ci-dessous, puis choisissez quelle version garder.",
     conflict_explain_external: "Git a changé en dehors de cet add-on (probablement modifié directement sur GitHub) depuis la dernière synchro. Envoyer maintenant écraserait silencieusement ce changement.",
+    conflict_explain_manual: "Comparaison manuelle : regardez la différence ci-dessous, puis choisissez quelle version garder. Utile quand un Push ou un Déploiement normal est bloqué pour une autre raison (par exemple une incohérence de fins de ligne) et que vous voulez quand même forcer un côté.",
     conflict_diff_loading: "Chargement de la différence…",
     conflict_diff_binary: "Le contenu de ce fichier ne peut pas être affiché en texte.",
     conflict_diff_too_large: "Ce fichier est trop volumineux pour être prévisualisé ici.",
@@ -568,6 +571,7 @@ const STRINGS = {
     mappings_add: "+ Ajouter un mapping",
     th_ha_path: "Chemin HA", th_git_path: "Chemin Git", th_manage: "Gérer",
     mapping_edit: "Modifier", mapping_delete: "Supprimer", mapping_normalize: "Rendre identique",
+    mapping_compare_force: "Comparer et forcer une version",
     mapping_modal_add: "Ajouter un mapping", mapping_modal_edit: "Modifier le mapping",
     field_id: "Identifiant", field_kind: "Type", field_direction: "Direction",
     field_ha_path: "Chemin Home Assistant", field_git_path: "Chemin Git",
@@ -685,6 +689,14 @@ function construireMenuKebab(fichier) {
     normalizeBtn.textContent = t("mapping_normalize");
     normalizeBtn.addEventListener("click", () => { fermerMenuKebab(); normaliserElement(fichier.id); });
     menu.appendChild(normalizeBtn);
+  }
+
+  if (fichier.manually_resolvable_now) {
+    const compareBtn = document.createElement("button");
+    compareBtn.type = "button";
+    compareBtn.textContent = t("mapping_compare_force");
+    compareBtn.addEventListener("click", () => { fermerMenuKebab(); ouvrirConflitModal(fichier); });
+    menu.appendChild(compareBtn);
   }
 
   const delBtn = document.createElement("button");
@@ -1243,7 +1255,9 @@ async function ouvrirConflitModal(fichier) {
   erreur.style.display = "none";
 
   el("conflict-explain").textContent =
-    fichier.sync_status === "conflict" ? t("conflict_explain_conflict") : t("conflict_explain_external");
+    fichier.sync_status === "conflict" ? t("conflict_explain_conflict")
+    : fichier.sync_status === "external" ? t("conflict_explain_external")
+    : t("conflict_explain_manual");
 
   el("conflict-keep-git").textContent =
     fichier.direction === "bidirectional" ? t("conflict_force_git") : t("conflict_keep_git");
@@ -2428,6 +2442,13 @@ def construire_etat() -> dict:
             and etat == "equivalent"
         )
 
+        manually_resolvable_now = (
+            kind != "directory"
+            and direction == "bidirectional"
+            and etat in {"different", "missing_ha", "missing_git"}
+            and sync_status != "conflict"
+        )
+
         fichiers.append(
             {
                 "id": element_id,
@@ -2439,6 +2460,7 @@ def construire_etat() -> dict:
                 "sync_status": sync_status,
                 "pushable_now": pushable_now,
                 "normalizable_now": normalizable_now,
+                "manually_resolvable_now": manually_resolvable_now,
                 "ha_path": element["ha_path"],
                 "git_path": element["git_path"],
             }
@@ -2466,7 +2488,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/1.4.0"
+    server_version = "HomelabGitManagement/1.5.0"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 

@@ -2,6 +2,33 @@
 
 All notable changes to this add-on are documented here.
 
+## 1.5.0 — manual compare & force for bidirectional mappings
+
+- New kebab-menu action, "Compare & force a version", for any
+  `bidirectional` mapping in the "different" (or one-sided "missing")
+  state whose sync status isn't already a detected conflict. It opens
+  the same dated, line-by-line diff screen as the automatic conflict
+  Resolve button, with the same two real resolutions (force-push Home
+  Assistant → Git, or force-deploy Git → Home Assistant) — but reachable
+  even when the sync tracker sees a normal one-sided change (only Home
+  Assistant, or only Git, changed) rather than a genuine two-sided
+  conflict.
+- Motivation: a normal Push can still be legitimately blocked by the
+  line-ending safety guard (introduced in 1.1.0) even when there is no
+  real conflict — for example, a real content edit made through an
+  editor that also flips the file to CRLF. Until now, the only way to
+  recover was to fix the line endings at the source; this gives a
+  documented, explicit way to instead discard the blocked side and take
+  the other version, without waiting for the sync tracker to (correctly)
+  call it a conflict.
+- No backend changes: this reuses the existing `/api/diff` endpoint
+  (already direction/kind-scoped, never gated on sync status) and the
+  existing `/api/deploy` force+sens dispatch (already tolerant of any
+  sync status when `force: true` is passed) exactly as the automatic
+  conflict screen does. Still fully respects `protect_from_git` on the
+  Git → Home Assistant side, and still requires the same explicit
+  confirmation as every other write path here.
+
 ## 1.4.0 — normalize equivalent to identical
 
 - New kebab-menu action, "Make identical", shown for any `ha_to_git` or
