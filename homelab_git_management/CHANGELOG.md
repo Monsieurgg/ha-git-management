@@ -2,6 +2,50 @@
 
 All notable changes to this add-on are documented here.
 
+## 2.1.0 — diff preview, backup restore, opt-in line-ending fix
+
+- New: **preview a difference before deploying/pushing normally.** The
+  "⋮" menu now offers "Preview the difference" for any `git_to_ha` or
+  `ha_to_git` mapping currently in a real "different" state, opening the
+  same dated, line-by-line diff screen previously reserved for
+  conflicts — with a single button matching the mapping's own direction
+  (Deploy or Push), asking the same normal confirmation, no shortcuts.
+  The `/api/diff` endpoint is accordingly no longer restricted to
+  `ha_to_git`/`bidirectional` — it now serves any file mapping.
+- New: **restore a previous local backup.** Every `git_to_ha` deploy has
+  always backed up the Home Assistant content it was about to overwrite
+  (`/data/deploy-backups/<id>/`), but there was no way to get one back
+  except by hand. The "⋮" menu now offers "Restore a previous backup"
+  for any file mapping that can receive a deploy (`git_to_ha` or
+  `bidirectional`): it lists every timestamped snapshot for that
+  mapping and writes the chosen one back onto Home Assistant, after
+  first backing up whatever is there right now — a restore is itself
+  always undoable, exactly like every other write here. Still respects
+  `protect_from_git`: a protected mapping refuses a restore exactly as
+  it refuses a normal deploy.
+- New: **opt-in automatic line-ending fix on Push**
+  (`normalize_line_endings: true`, off by default). Until now, a Push
+  blocked by the line-ending safety guard (1.1.0) had exactly one fix:
+  correct the line endings at the source before trying again. Turning
+  this on for a mapping instead rewrites the pushed content to match
+  whatever convention is already tracked in Git — logged clearly when
+  it happens — while leaving the Home Assistant file itself completely
+  untouched. Off by default, so nothing changes unless explicitly
+  enabled per mapping from the dashboard's mapping form. A real,
+  separate content change still pushes as a normal, clean commit; only
+  the line-ending noise is absorbed.
+- Fixed as part of the line-ending option above: the sync-state
+  reference recorded after any push now correctly reflects each side's
+  *actual* bytes independently, instead of assuming both sides always
+  end up identical to what was written to Git. Without this, a
+  normalized push could have wrongly flagged Home Assistant as
+  "changed again" on the very next comparison.
+- Dashboard cleanup: the read-only and write-capable Deploy Keys are no
+  longer shown permanently at the top of the dashboard once configured
+  — both now live together in one collapsed "🔑 Deploy keys" section,
+  expandable only when actually needed (e.g. setting up write access
+  for a new mapping).
+
 ## 2.0.0 — full two-way sync, general availability
 
 This release marks the merge of the full two-way sync feature set into

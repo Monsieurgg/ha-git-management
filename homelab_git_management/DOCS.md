@@ -32,6 +32,7 @@ Each entry under `mappings`:
 | `git_path` | string | Path relative to the repository root. |
 | `direction` | `git_to_ha` \| `ha_to_git` \| `bidirectional` | All three are implemented. |
 | `protect_from_git` | boolean | Optional. Blocks this mapping from ever being deployed to (Git → Home Assistant) when `true`. Defaults to `true` for `configuration.yaml`/`scripts.yaml`/`automations.yaml`/`scenes.yaml` and `false` for everything else if omitted. See [Protected files](#protected-files). |
+| `normalize_line_endings` | boolean | Optional, defaults to `false`. When `true`, a Push blocked by the line-ending safety guard is instead rewritten to match Git's tracked convention before pushing, rather than blocked. See [Line-ending safety](#pushing-home-assistant-changes-to-git-ha_to_git). |
 
 ## Managing mappings from the dashboard
 
@@ -116,13 +117,40 @@ already tracked in Git for that path. A mismatch — usually a sign that
 something upstream (an editor, a network share, a text-mode file
 transfer, ...) touched the live file — is blocked with a clear error
 instead of being pushed: converting every line's ending would otherwise
-bury the real, intended change in a diff touching the whole file.
+bury the real, intended change in a diff touching the whole file. Setting
+`normalize_line_endings: true` on the mapping (a checkbox in the
+dashboard's mapping form, shown for `ha_to_git`/`bidirectional`) changes
+this from a block into an automatic fix: the pushed content is rewritten
+to match Git's tracked convention, logged clearly when it happens, while
+the Home Assistant file itself is left completely untouched. Off by
+default — nothing changes unless a mapping explicitly turns it on.
+
+**Comparing before deploying/pushing normally.** The "⋮" menu offers
+"Preview the difference" for any `git_to_ha` or `ha_to_git` mapping
+currently in a real "different" state — the same dated, line-by-line
+diff screen as the Resolve screen below, but with a single button
+matching the mapping's own direction (Deploy or Push) instead of a
+forced resolution, and the same explicit confirmation a normal
+Deploy/Push already asks for. Useful any time you want to see exactly
+what would change before committing to it, not only when something is
+blocked.
+
+**Restoring a previous local backup.** Every deployment to Home Assistant
+(`git_to_ha`, or the Deploy side of `bidirectional`) already backs up the
+file it is about to overwrite, timestamped, under
+`/data/deploy-backups/<id>/` — see [Deployment safety](#deployment-safety).
+The "⋮" menu's "Restore a previous backup" lists those snapshots for a
+mapping and writes a chosen one back onto Home Assistant, independently
+of Git — useful when a recent change turns out not to work and Git's own
+history isn't the fastest way back. The current content is itself backed
+up first, so a restore is always undoable too, and it respects
+`protect_from_git` exactly like a normal deploy would.
 
 **The one exception to "no file content is ever shown."** The Resolve
 screen above is the single place in this add-on where real file content
 reaches the browser, instead of only comparison metadata. It is scoped
-narrowly: only for `ha_to_git` mappings in a blocked state, capped in
-size, and skipped entirely (a "cannot preview" message instead) for
+narrowly: only for a blocked state or an explicit preview request, capped
+in size, and skipped entirely (a "cannot preview" message instead) for
 binary content. This content never leaves your own authenticated Ingress
 session — see **Exposure and authentication** below.
 

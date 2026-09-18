@@ -140,9 +140,9 @@ easily be protected the same way. See `DOCS.md`.
   a deliberate reduction of risk;
 - the web UI never displays file contents or secrets, only comparison
   state — with one deliberate, narrow exception: the conflict resolution
-  screen (`ha_to_git` and `bidirectional`) shows a line-by-line
-  difference to help you decide which version to keep (never transmitted
-  anywhere beyond your own authenticated Ingress session);
+  screen, and its "Preview the difference" counterpart for a normal
+  Deploy/Push, show a line-by-line difference to help you decide (never
+  transmitted anywhere beyond your own authenticated Ingress session);
 - the add-on has no network port of its own: it is only reachable through
   Home Assistant's Ingress, which requires an authenticated admin user
   session. See

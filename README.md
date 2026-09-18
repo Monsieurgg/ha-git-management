@@ -147,10 +147,10 @@ peut au contraire être protégé de la même façon. Voir `DOCS.md`.
   charge (comparaison uniquement) — une réduction de risque délibérée ;
 - l'interface web n'affiche jamais le contenu des fichiers ni aucun
   secret, uniquement l'état de comparaison — sauf une exception unique et
-  volontaire : l'écran de résolution de conflit (`ha_to_git` et
-  `bidirectional`) affiche une différence ligne par ligne pour vous aider
-  à choisir quelle version garder (jamais transmis ailleurs qu'à votre
-  propre session Ingress authentifiée) ;
+  volontaire : l'écran de résolution de conflit, et son équivalent
+  « Aperçu de la différence » pour un Déploiement/Envoi normal, affichent
+  une différence ligne par ligne pour vous aider à décider (jamais
+  transmis ailleurs qu'à votre propre session Ingress authentifiée) ;
 - l'add-on n'a pas de port réseau propre : il n'est joignable que via
   l'Ingress de Home Assistant, qui exige une session utilisateur
   administrateur authentifiée. Voir

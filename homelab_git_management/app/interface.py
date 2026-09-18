@@ -121,6 +121,10 @@ button:disabled { opacity: 0.5; cursor: default; }
 .panel-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 15px 17px; border-bottom: 1px solid var(--border); }
 .panel-header h2 { margin: 0; font-size: 17px; }
 .panel-header-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+#keys-panel > summary { padding: 15px 17px; font-weight: 600; font-size: 15px; cursor: pointer;
+  list-style: none; }
+#keys-panel > summary::-webkit-details-marker { display: none; }
+#keys-panel[open] > summary { border-bottom: 1px solid var(--border); }
 .panel-body { padding: 17px; }
 .status-line { color: var(--muted); font-size: 12px; text-align: right; }
 .table-wrapper { overflow-x: auto; }
@@ -176,6 +180,11 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
 .diff-remove { background: var(--danger-bg); color: var(--danger); display: block; }
 .diff-hunk { color: var(--info); display: block; }
 .conflict-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.backup-row { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px; }
+.backup-row .backup-meta { font-size: 13px; }
+.backup-row .backup-size { color: var(--muted); font-size: 12px; }
+#backups-list { max-height: 360px; overflow-y: auto; }
 .modal-header { display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 15px 17px; border-bottom: 1px solid var(--border); }
 .modal-header h3 { margin: 0; font-size: 16px; }
@@ -253,9 +262,14 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
     </div>
   </div>
 
-  <div id="write-key-panel" class="panel" hidden>
-    <div class="panel-header"><h2 data-i18n="write_key_title">Optional: write access (ha_to_git)</h2></div>
+  <details id="keys-panel" class="panel" hidden>
+    <summary data-i18n="keys_panel_title">🔑 Deploy keys (read + write)</summary>
     <div class="panel-body">
+      <div class="field-row"><span class="label" data-i18n="setup_key_label">Public key</span></div>
+      <div class="key-row">
+        <code id="setup-key-collapsed" class="key-box">—</code>
+        <button id="copy-key-collapsed" type="button" data-i18n="copy_key">Copy</button>
+      </div>
       <p class="field-row" data-i18n="write_key_intro"></p>
       <div class="field-row"><span class="label" data-i18n="setup_write_key_label">Write-capable public key</span></div>
       <div class="key-row">
@@ -263,7 +277,7 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
         <button id="copy-key-write" type="button" data-i18n="copy_key">Copy</button>
       </div>
     </div>
-  </div>
+  </details>
 
   <div id="dashboard" hidden>
 
@@ -370,6 +384,13 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
         </label>
       </div>
       <div id="mapping-protect-warning" class="error"></div>
+
+      <div id="mapping-normalize-row" class="field-row" hidden>
+        <label>
+          <input id="mapping-normalize-line-endings" type="checkbox">
+          <span data-i18n="field_normalize_line_endings">Auto-fix line endings on Push instead of blocking</span>
+        </label>
+      </div>
     </div>
     <div class="modal-footer">
       <button id="mapping-cancel" type="button" data-i18n="cancel">Cancel</button>
@@ -422,6 +443,23 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
   </div>
 </div>
 
+<div id="backups-modal" class="modal-overlay" hidden>
+  <div class="modal modal-wide">
+    <div class="modal-header">
+      <h3 data-i18n="backups_modal_title">Restore a previous backup</h3>
+      <button id="backups-modal-close" type="button" class="modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="backups-error" class="error"></div>
+      <p class="field-row" data-i18n="backups_explain">Each entry below is a snapshot of this file taken automatically right before a previous deployment overwrote it. Restoring writes it back to Home Assistant now — the current content is itself backed up first, so this is always undoable too.</p>
+      <div id="backups-list"></div>
+    </div>
+    <div class="modal-footer">
+      <button id="backups-cancel" type="button" data-i18n="cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div id="restart-overlay" class="restart-overlay" hidden>
   <div class="spinner"></div>
   <p data-i18n="restart_overlay_text">Applying your change — the add-on is restarting…</p>
@@ -460,7 +498,7 @@ const STRINGS = {
     confirm_force_deploy: 'Force-deploy "{target}"? This overwrites the current Home Assistant file with the GitHub version — the Home Assistant-side change shown in the diff will be discarded.',
     confirm_keep_git: 'Accept the current GitHub content as the new reference point for "{target}"? Nothing is pushed and Home Assistant is not touched — if it still differs afterward, a normal Push becomes available again.',
     confirm_normalize: 'Make "{target}" byte-for-byte identical? This takes the exact Home Assistant version (including its line endings) and writes it into Git as a formatting-only commit — no content is changing, only the byte-level representation.',
-    write_key_title: "Optional: write access (ha_to_git)",
+    keys_panel_title: "🔑 Deploy keys (read + write)",
     write_key_intro: "Only needed if you configure a mapping with direction: ha_to_git. This is a separate key from the one above — the read-only key never gains write access, and this key stays inactive until you add it on GitHub yourself, this time allowing write access.",
     setup_write_key_label: "Write-capable public key:",
     conflict_modal_title: "Resolve",
@@ -472,6 +510,14 @@ const STRINGS = {
     conflict_explain_conflict: "Both Home Assistant and Git changed independently since the last sync. Review the difference below, then choose which version to keep.",
     conflict_explain_external: "Git changed outside this add-on (most likely edited directly on GitHub) since the last sync. Pushing now would silently discard that edit.",
     conflict_explain_manual: "Manual comparison: review the difference below, then choose which version to keep. Useful when a normal Push or Deploy is blocked for another reason (for example a line-ending mismatch) and you want to force one side anyway.",
+    conflict_explain_preview: "Preview: review the difference below before deciding. Confirming still asks the normal confirmation and does not skip any safety check.",
+    backups_modal_title: "Restore a previous backup",
+    backups_explain: "Each entry below is a snapshot of this file taken automatically right before a previous deployment overwrote it. Restoring writes it back to Home Assistant now — the current content is itself backed up first, so this is always undoable too.",
+    backups_none: "No backup yet for this mapping.",
+    backups_restore: "Restore",
+    backups_error_load: "Could not load backups: ",
+    backups_error_restore: "Could not restore: ",
+    confirm_restore_backup: 'Restore this backup of "{target}"? The current Home Assistant content will first be backed up, then overwritten with this older version.',
     conflict_diff_loading: "Loading the difference…",
     conflict_diff_binary: "This file's content cannot be shown as text.",
     conflict_diff_too_large: "This file is too large to preview here.",
@@ -492,11 +538,14 @@ const STRINGS = {
     th_ha_path: "HA path", th_git_path: "Git path", th_direction: "Direction", th_manage: "Manage",
     mapping_edit: "Edit", mapping_delete: "Delete", mapping_normalize: "Make identical",
     mapping_compare_force: "Compare & force a version",
+    mapping_preview: "Preview the difference",
+    mapping_restore_backup: "Restore a previous backup",
     mapping_modal_add: "Add a mapping", mapping_modal_edit: "Edit mapping",
     field_id: "Identifier", field_kind: "Type", field_direction: "Direction",
     field_ha_path: "Home Assistant path", field_git_path: "Git path",
     field_protect: "🔒 Protect this file — never let Deploy/Git overwrite it",
     mapping_protect_warning: "⚠️ This is one of Home Assistant's own core config files. Leaving it unprotected is strongly discouraged: a failed deployment here could break your whole Home Assistant instance.",
+    field_normalize_line_endings: "🔧 Auto-fix line endings on Push instead of blocking",
     confirm_unprotect_core: "You are about to save \"{target}\" WITHOUT protection, on a core Home Assistant config file. This is strongly discouraged — a bad deployment could break your Home Assistant instance. Continue anyway?",
     kind_file: "File", kind_directory: "Directory (comparison only)",
     dir_git_to_ha: "Git -> Home Assistant",
@@ -543,7 +592,7 @@ const STRINGS = {
     confirm_force_deploy: 'Forcer le déploiement de « {target} » ? Ceci écrase le fichier Home Assistant actuel par la version GitHub — le changement côté Home Assistant affiché dans le diff sera perdu.',
     confirm_keep_git: 'Accepter le contenu GitHub actuel comme nouvelle référence pour « {target} » ? Rien n\'est envoyé et Home Assistant n\'est pas modifié — si ça diffère toujours ensuite, un envoi normal redevient possible.',
     confirm_normalize: 'Rendre « {target} » identique octet par octet ? Ceci prend la version Home Assistant exacte (y compris ses fins de ligne) et l\'écrit dans Git comme un commit purement formel — aucun contenu ne change, seule la représentation en octets change.',
-    write_key_title: "Optionnel : accès en écriture (ha_to_git)",
+    keys_panel_title: "🔑 Clés de déploiement (lecture + écriture)",
     write_key_intro: "Nécessaire uniquement si vous configurez un mapping avec direction: ha_to_git. C'est une clé séparée de celle ci-dessus — la clé en lecture seule n'obtient jamais d'accès écriture, et cette clé reste inactive tant que vous ne l'ajoutez pas vous-même sur GitHub, cette fois en autorisant l'écriture.",
     setup_write_key_label: "Clé publique en écriture :",
     conflict_modal_title: "Résoudre",
@@ -555,6 +604,14 @@ const STRINGS = {
     conflict_explain_conflict: "Home Assistant et Git ont tous les deux changé indépendamment depuis la dernière synchro. Regardez la différence ci-dessous, puis choisissez quelle version garder.",
     conflict_explain_external: "Git a changé en dehors de cet add-on (probablement modifié directement sur GitHub) depuis la dernière synchro. Envoyer maintenant écraserait silencieusement ce changement.",
     conflict_explain_manual: "Comparaison manuelle : regardez la différence ci-dessous, puis choisissez quelle version garder. Utile quand un Push ou un Déploiement normal est bloqué pour une autre raison (par exemple une incohérence de fins de ligne) et que vous voulez quand même forcer un côté.",
+    conflict_explain_preview: "Aperçu : regardez la différence ci-dessous avant de décider. Confirmer redemande quand même la confirmation normale et ne saute aucune vérification de sécurité.",
+    backups_modal_title: "Restaurer une sauvegarde précédente",
+    backups_explain: "Chaque entrée ci-dessous est un instantané de ce fichier pris automatiquement juste avant qu'un déploiement précédent ne l'écrase. Restaurer l'écrit maintenant sur Home Assistant — le contenu actuel est d'abord lui-même sauvegardé, donc c'est toujours réversible aussi.",
+    backups_none: "Aucune sauvegarde pour l'instant pour ce mapping.",
+    backups_restore: "Restaurer",
+    backups_error_load: "Impossible de charger les sauvegardes : ",
+    backups_error_restore: "Impossible de restaurer : ",
+    confirm_restore_backup: 'Restaurer cette sauvegarde de « {target} » ? Le contenu Home Assistant actuel sera d\'abord sauvegardé, puis écrasé par cette version plus ancienne.',
     conflict_diff_loading: "Chargement de la différence…",
     conflict_diff_binary: "Le contenu de ce fichier ne peut pas être affiché en texte.",
     conflict_diff_too_large: "Ce fichier est trop volumineux pour être prévisualisé ici.",
@@ -575,11 +632,14 @@ const STRINGS = {
     th_ha_path: "Chemin HA", th_git_path: "Chemin Git", th_direction: "Direction", th_manage: "Gérer",
     mapping_edit: "Modifier", mapping_delete: "Supprimer", mapping_normalize: "Rendre identique",
     mapping_compare_force: "Comparer et forcer une version",
+    mapping_preview: "Aperçu de la différence",
+    mapping_restore_backup: "Restaurer une sauvegarde précédente",
     mapping_modal_add: "Ajouter un mapping", mapping_modal_edit: "Modifier le mapping",
     field_id: "Identifiant", field_kind: "Type", field_direction: "Direction",
     field_ha_path: "Chemin Home Assistant", field_git_path: "Chemin Git",
     field_protect: "🔒 Protéger ce fichier — ne jamais laisser Déployer/Git l'écraser",
     mapping_protect_warning: "⚠️ Ceci est l'un des fichiers de configuration essentiels de Home Assistant. Le laisser sans protection est fortement déconseillé : un déploiement raté ici pourrait casser toute votre instance Home Assistant.",
+    field_normalize_line_endings: "🔧 Corriger auto. les fins de ligne au Push au lieu de bloquer",
     confirm_unprotect_core: "Vous êtes sur le point d'enregistrer « {target} » SANS protection, sur un fichier de configuration essentiel de Home Assistant. C'est fortement déconseillé — un mauvais déploiement pourrait casser votre instance Home Assistant. Continuer quand même ?",
     kind_file: "Fichier", kind_directory: "Dossier (comparaison uniquement)",
     dir_git_to_ha: "Git -> Home Assistant",
@@ -701,6 +761,22 @@ function construireMenuKebab(fichier) {
     compareBtn.textContent = t("mapping_compare_force");
     compareBtn.addEventListener("click", () => { fermerMenuKebab(); ouvrirConflitModal(fichier); });
     menu.appendChild(compareBtn);
+  }
+
+  if (fichier.previewable_now) {
+    const previewBtn = document.createElement("button");
+    previewBtn.type = "button";
+    previewBtn.textContent = t("mapping_preview");
+    previewBtn.addEventListener("click", () => { fermerMenuKebab(); ouvrirConflitModal(fichier); });
+    menu.appendChild(previewBtn);
+  }
+
+  if (fichier.restaurable_now) {
+    const restoreBtn = document.createElement("button");
+    restoreBtn.type = "button";
+    restoreBtn.textContent = t("mapping_restore_backup");
+    restoreBtn.addEventListener("click", () => { fermerMenuKebab(); ouvrirSauvegardesModal(fichier); });
+    menu.appendChild(restoreBtn);
   }
 
   const delBtn = document.createElement("button");
@@ -832,6 +908,7 @@ function copierMappingsPourEnvoi() {
     id: mapping.id, kind: mapping.kind, direction: mapping.direction,
     ha_path: mapping.ha_path, git_path: mapping.git_path,
     protect_from_git: !!mapping.protected,
+    normalize_line_endings: !!mapping.normalize_line_endings,
   }));
 }
 
@@ -874,6 +951,11 @@ function mettreAJourAvertissementProtection() {
   }
 }
 
+function mettreAJourVisibiliteNormalisation() {
+  const direction = el("mapping-direction").value;
+  el("mapping-normalize-row").hidden = direction !== "ha_to_git" && direction !== "bidirectional";
+}
+
 function ouvrirModalMapping(mapping) {
   mappingEnEdition = mapping ? mapping.id : null;
 
@@ -889,8 +971,10 @@ function ouvrirModalMapping(mapping) {
   el("mapping-ha-path").value = mapping ? mapping.ha_path : "";
   el("mapping-git-path").value = mapping ? mapping.git_path : "";
   el("mapping-protect").checked = mapping ? !!mapping.protected : false;
+  el("mapping-normalize-line-endings").checked = mapping ? !!mapping.normalize_line_endings : false;
 
   mettreAJourAvertissementProtection();
+  mettreAJourVisibiliteNormalisation();
 
   el("mapping-modal").hidden = false;
 }
@@ -947,13 +1031,17 @@ async function sauvegarderMapping() {
   }
 
   const protectFromGit = el("mapping-protect").checked;
+  const normalizeLineEndings = el("mapping-normalize-line-endings").checked;
   const directionConcernee = direction === "git_to_ha" || direction === "bidirectional";
 
   if (directionConcernee && estCheminEssentiel(haPath) && !protectFromGit) {
     if (!window.confirm(t("confirm_unprotect_core").replace("{target}", id))) return;
   }
 
-  const nouveauMapping = { id, kind, direction, ha_path: haPath, git_path: gitPath, protect_from_git: protectFromGit };
+  const nouveauMapping = {
+    id, kind, direction, ha_path: haPath, git_path: gitPath,
+    protect_from_git: protectFromGit, normalize_line_endings: normalizeLineEndings,
+  };
   const listeExistante = copierMappingsPourEnvoi();
 
   const nouvelleListe = mappingEnEdition
@@ -1150,10 +1238,8 @@ async function chargerEtatSiConfigure() {
   try {
     const setup = await chargerSetup();
 
-    el("setup-key-write").textContent = setup.public_key_write || "—";
-    el("write-key-panel").hidden = false;
-
     if (!setup.configured) {
+      el("keys-panel").hidden = true;
       el("setup-panel").hidden = false;
       el("dashboard").hidden = true;
       el("refresh").hidden = true;
@@ -1171,6 +1257,14 @@ async function chargerEtatSiConfigure() {
 
       return;
     }
+
+    // Once configured, both keys are just reference info someone needs
+    // rarely (adding a second mapping's write key, re-pointing at a new
+    // repo) — collapsed by default instead of permanently taking up the
+    // top of the dashboard.
+    el("setup-key-collapsed").textContent = setup.public_key || "—";
+    el("setup-key-write").textContent = setup.public_key_write || "—";
+    el("keys-panel").hidden = false;
 
     el("setup-panel").hidden = true;
     el("dashboard").hidden = false;
@@ -1215,9 +1309,9 @@ async function deployerElement(cible, bouton) {
 
   const erreur = el("error");
   erreur.style.display = "none";
-  bouton.disabled = true;
-  const libelle = bouton.textContent;
-  bouton.textContent = t("deploying");
+  if (bouton) { bouton.disabled = true; }
+  const libelle = bouton ? bouton.textContent : null;
+  if (bouton) { bouton.textContent = t("deploying"); }
 
   try {
     const reponse = await fetch(`${cheminBaseIngress()}api/deploy`, {
@@ -1231,8 +1325,7 @@ async function deployerElement(cible, bouton) {
   } catch (exception) {
     erreur.textContent = t("error_deploy") + exception.message;
     erreur.style.display = "block";
-    bouton.disabled = false;
-    bouton.textContent = libelle;
+    if (bouton) { bouton.disabled = false; bouton.textContent = libelle; }
   }
 }
 
@@ -1241,9 +1334,9 @@ async function pousserElement(cible, bouton) {
 
   const erreur = el("error");
   erreur.style.display = "none";
-  bouton.disabled = true;
-  const libelle = bouton.textContent;
-  bouton.textContent = t("pushing");
+  if (bouton) { bouton.disabled = true; }
+  const libelle = bouton ? bouton.textContent : null;
+  if (bouton) { bouton.textContent = t("pushing"); }
 
   try {
     const reponse = await fetch(`${cheminBaseIngress()}api/deploy`, {
@@ -1257,8 +1350,7 @@ async function pousserElement(cible, bouton) {
   } catch (exception) {
     erreur.textContent = t("error_push") + exception.message;
     erreur.style.display = "block";
-    bouton.disabled = false;
-    bouton.textContent = libelle;
+    if (bouton) { bouton.disabled = false; bouton.textContent = libelle; }
   }
 }
 
@@ -1285,6 +1377,7 @@ async function normaliserElement(cible) {
 
 let conflictCibleCourante = null;
 let conflictDirectionCourante = null;
+let conflictModeCourant = "conflict";
 
 function construireLigneDiff(ligne) {
   const span = document.createElement("span");
@@ -1303,16 +1396,29 @@ async function ouvrirConflitModal(fichier) {
   conflictCibleCourante = fichier.id;
   conflictDirectionCourante = fichier.direction;
 
+  conflictModeCourant =
+    fichier.sync_status === "conflict" || fichier.sync_status === "external" ? "conflict"
+    : fichier.direction === "bidirectional" ? "manual"
+    : "preview";
+
   const erreur = el("conflict-error");
   erreur.style.display = "none";
 
   el("conflict-explain").textContent =
-    fichier.sync_status === "conflict" ? t("conflict_explain_conflict")
-    : fichier.sync_status === "external" ? t("conflict_explain_external")
-    : t("conflict_explain_manual");
+    conflictModeCourant === "conflict"
+      ? (fichier.sync_status === "conflict" ? t("conflict_explain_conflict") : t("conflict_explain_external"))
+    : conflictModeCourant === "manual" ? t("conflict_explain_manual")
+    : t("conflict_explain_preview");
 
-  el("conflict-keep-git").textContent =
-    fichier.direction === "bidirectional" ? t("conflict_force_git") : t("conflict_keep_git");
+  if (conflictModeCourant === "preview") {
+    el("conflict-keep-git").textContent =
+      fichier.direction === "git_to_ha" ? t("action_deploy") : t("action_push");
+    el("conflict-force-ha").hidden = true;
+  } else {
+    el("conflict-keep-git").textContent =
+      fichier.direction === "bidirectional" ? t("conflict_force_git") : t("conflict_keep_git");
+    el("conflict-force-ha").hidden = false;
+  }
 
   el("conflict-ha-date").textContent = "…";
   el("conflict-git-date").textContent = "…";
@@ -1356,8 +1462,10 @@ async function ouvrirConflitModal(fichier) {
 
 function fermerConflitModal() {
   el("conflict-modal").hidden = true;
+  el("conflict-force-ha").hidden = false;
   conflictCibleCourante = null;
   conflictDirectionCourante = null;
+  conflictModeCourant = "conflict";
 }
 
 async function resoudreForcer() {
@@ -1426,17 +1534,148 @@ async function resoudreAcquitter() {
   }
 }
 
+function resoudrePreviewAction() {
+  if (!conflictCibleCourante) return;
+  const cible = conflictCibleCourante;
+  const direction = conflictDirectionCourante;
+  fermerConflitModal();
+  if (direction === "git_to_ha") {
+    deployerElement(cible, null);
+  } else {
+    pousserElement(cible, null);
+  }
+}
+
 function resoudreVersGit() {
-  if (conflictDirectionCourante === "bidirectional") {
+  if (conflictModeCourant === "preview") {
+    resoudrePreviewAction();
+  } else if (conflictDirectionCourante === "bidirectional") {
     resoudreForcerDeploy();
   } else {
     resoudreAcquitter();
   }
 }
 
+let backupsCibleCourante = null;
+
+function formaterTailleOctets(octets) {
+  if (octets < 1024) return `${octets} B`;
+  if (octets < 1024 * 1024) return `${(octets / 1024).toFixed(1)} KB`;
+  return `${(octets / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function ouvrirSauvegardesModal(fichier) {
+  backupsCibleCourante = fichier.id;
+
+  const erreur = el("backups-error");
+  erreur.style.display = "none";
+
+  const liste = el("backups-list");
+  liste.replaceChildren();
+  liste.textContent = t("loading");
+
+  el("backups-modal").hidden = false;
+
+  try {
+    const reponse = await fetch(
+      `${cheminBaseIngress()}api/backups?target=${encodeURIComponent(fichier.id)}`,
+      { cache: "no-store" }
+    );
+    const donnees = await reponse.json();
+    if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
+
+    liste.replaceChildren();
+
+    if (!donnees.backups.length) {
+      liste.textContent = t("backups_none");
+      return;
+    }
+
+    for (const sauvegarde of donnees.backups) {
+      const ligne = document.createElement("div");
+      ligne.className = "backup-row";
+
+      const meta = document.createElement("div");
+      const date = document.createElement("div");
+      date.className = "backup-meta";
+      date.textContent = sauvegarde.created_at;
+      const taille = document.createElement("div");
+      taille.className = "backup-size";
+      taille.textContent = formaterTailleOctets(sauvegarde.size);
+      meta.appendChild(date);
+      meta.appendChild(taille);
+
+      const boutonRestaurer = document.createElement("button");
+      boutonRestaurer.type = "button";
+      boutonRestaurer.textContent = t("backups_restore");
+      boutonRestaurer.addEventListener("click", () => restaurerSauvegarde(sauvegarde.name, boutonRestaurer));
+
+      ligne.appendChild(meta);
+      ligne.appendChild(boutonRestaurer);
+      liste.appendChild(ligne);
+    }
+  } catch (exception) {
+    liste.textContent = "";
+    erreur.textContent = t("backups_error_load") + exception.message;
+    erreur.style.display = "block";
+  }
+}
+
+function fermerSauvegardesModal() {
+  el("backups-modal").hidden = true;
+  backupsCibleCourante = null;
+}
+
+async function restaurerSauvegarde(nomSauvegarde, bouton) {
+  if (!backupsCibleCourante) return;
+  if (!window.confirm(t("confirm_restore_backup").replace("{target}", backupsCibleCourante))) return;
+
+  const erreur = el("backups-error");
+  erreur.style.display = "none";
+  bouton.disabled = true;
+
+  try {
+    const reponse = await fetch(`${cheminBaseIngress()}api/restore-backup`, {
+      method: "POST", cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: backupsCibleCourante, backup: nomSauvegarde }),
+    });
+    const donnees = await reponse.json();
+    if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
+    fermerSauvegardesModal();
+    afficherEtat(donnees);
+  } catch (exception) {
+    erreur.textContent = t("backups_error_restore") + exception.message;
+    erreur.style.display = "block";
+    bouton.disabled = false;
+  }
+}
+
 async function copierCle() {
   const bouton = el("copy-key");
   const cle = el("setup-key").textContent;
+
+  if (!cle || cle === "—") return;
+
+  try {
+    await navigator.clipboard.writeText(cle);
+  } catch (exception) {
+    return;
+  }
+
+  const libelle = bouton.textContent;
+  bouton.textContent = t("copied_key");
+  bouton.disabled = true;
+
+  setTimeout(() => {
+    bouton.textContent = libelle;
+    bouton.disabled = false;
+  }, 1500);
+}
+
+async function copierCleCollapsed() {
+  const bouton = el("copy-key-collapsed");
+  const cle = el("setup-key-collapsed").textContent;
 
   if (!cle || cle === "—") return;
 
@@ -1481,12 +1720,15 @@ async function copierCleEcriture() {
 el("lang-toggle").addEventListener("click", switchLang);
 el("refresh").addEventListener("click", actualiserGit);
 el("copy-key").addEventListener("click", copierCle);
+el("copy-key-collapsed").addEventListener("click", copierCleCollapsed);
 el("copy-key-write").addEventListener("click", copierCleEcriture);
 
 el("conflict-modal-close").addEventListener("click", fermerConflitModal);
 el("conflict-cancel").addEventListener("click", fermerConflitModal);
 el("conflict-force-ha").addEventListener("click", resoudreForcer);
 el("conflict-keep-git").addEventListener("click", resoudreVersGit);
+el("backups-modal-close").addEventListener("click", fermerSauvegardesModal);
+el("backups-cancel").addEventListener("click", fermerSauvegardesModal);
 
 el("add-mapping").addEventListener("click", () => ouvrirModalMapping(null));
 el("mapping-modal-close").addEventListener("click", fermerModalMapping);
@@ -1496,6 +1738,7 @@ el("mapping-save").addEventListener("click", sauvegarderMapping);
 el("mapping-direction").addEventListener("change", () => {
   appliquerDefautProtection();
   mettreAJourAvertissementProtection();
+  mettreAJourVisibiliteNormalisation();
 });
 el("mapping-ha-path").addEventListener("input", () => {
   appliquerDefautProtection();
@@ -1820,10 +2063,10 @@ def gerer_diff(handler: "InterfaceHandler") -> None:
         handler.repondre_json(404, {"ok": False, "error": "unmanaged element"})
         return
 
-    if element["direction"] not in {"ha_to_git", "bidirectional"} or element["kind"] != "file":
+    if element["kind"] != "file":
         handler.repondre_json(
             400,
-            {"ok": False, "error": "diff is only available for ha_to_git/bidirectional file mappings"},
+            {"ok": False, "error": "diff is only available for file mappings"},
         )
         return
 
@@ -1884,6 +2127,79 @@ def gerer_diff(handler: "InterfaceHandler") -> None:
     ))
 
     handler.repondre_json(200, reponse)
+
+
+###############################################################################
+# BACKUPS (restore a previous local backup)
+#
+# Every git_to_ha deploy already backs up the Home Assistant content it
+# is about to overwrite (see gestionnaire.creer_sauvegarde()). This just
+# exposes that existing archive so a human can browse and restore from
+# it, instead of it only ever being used internally for the automatic
+# write-failure rollback.
+###############################################################################
+
+def gerer_liste_sauvegardes(handler: "InterfaceHandler") -> None:
+
+    requete = urllib.parse.urlsplit(handler.path)
+    parametres = urllib.parse.parse_qs(requete.query)
+    cible = (parametres.get("target") or [""])[0]
+
+    if not cible:
+        handler.repondre_json(400, {"ok": False, "error": "missing target"})
+        return
+
+    module, erreur_chargement = charger_gestionnaire()
+
+    if module is None:
+        handler.repondre_json(503, {"ok": False, "error": erreur_chargement})
+        return
+
+    if cible not in {element["id"] for element in module.elements}:
+        handler.repondre_json(404, {"ok": False, "error": "unmanaged element"})
+        return
+
+    handler.repondre_json(200, {"ok": True, "backups": module.lister_sauvegardes(cible)})
+
+
+def declencher_restauration_sauvegarde(cible: object, nom_sauvegarde: object) -> tuple[bool, str | None]:
+
+    if not isinstance(cible, str) or not cible:
+        return False, "invalid target"
+
+    if not isinstance(nom_sauvegarde, str) or not nom_sauvegarde:
+        return False, "invalid backup name"
+
+    module, erreur_chargement = charger_gestionnaire()
+
+    if module is None:
+        return False, erreur_chargement
+
+    sortie_capturee = io.StringIO()
+
+    try:
+
+        with (
+            contextlib.redirect_stdout(sortie_capturee),
+            contextlib.redirect_stderr(sortie_capturee),
+        ):
+
+            module.restaurer_depuis_sauvegarde(cible, nom_sauvegarde)
+
+    except SystemExit as exc:
+
+        message = sortie_capturee.getvalue().strip()
+
+        print(sortie_capturee.getvalue(), end="", flush=True)
+
+        return False, message or f"restore refused (see add-on logs): code {exc.code}"
+
+    except Exception as exc:
+        print(sortie_capturee.getvalue(), end="", flush=True)
+        return False, f"{type(exc).__name__}: {exc}"
+
+    print(sortie_capturee.getvalue(), end="", flush=True)
+    return True, None
 
 
 ###############################################################################
@@ -1973,6 +2289,11 @@ def valider_mappings_proposes(module, mappings_proposes: list) -> list:
         if protect_from_git is not None and not isinstance(protect_from_git, bool):
             raise ValueError(f"{element_id}: invalid protect_from_git (must be true or false)")
 
+        normalize_line_endings = entree.get("normalize_line_endings")
+
+        if normalize_line_endings is not None and not isinstance(normalize_line_endings, bool):
+            raise ValueError(f"{element_id}: invalid normalize_line_endings (must be true or false)")
+
         # A mapping's ha_path/git_path are picked independently (two
         # separate browse dialogs), so nothing before this enforced they
         # actually describe "the same" thing. Catch the two most common
@@ -2008,6 +2329,7 @@ def valider_mappings_proposes(module, mappings_proposes: list) -> list:
             "git_path": git_path.strip(),
             "direction": direction,
             "protect_from_git": protect_from_git,
+            "normalize_line_endings": bool(normalize_line_endings),
         })
 
     return resultat
@@ -2501,6 +2823,14 @@ def construire_etat() -> dict:
             and sync_status != "conflict"
         )
 
+        previewable_now = (
+            kind != "directory"
+            and direction in {"git_to_ha", "ha_to_git"}
+            and etat in {"different", "missing_ha", "missing_git"}
+        )
+
+        restaurable_now = kind != "directory" and direction in {"git_to_ha", "bidirectional"}
+
         fichiers.append(
             {
                 "id": element_id,
@@ -2513,6 +2843,9 @@ def construire_etat() -> dict:
                 "pushable_now": pushable_now,
                 "normalizable_now": normalizable_now,
                 "manually_resolvable_now": manually_resolvable_now,
+                "previewable_now": previewable_now,
+                "restaurable_now": restaurable_now,
+                "normalize_line_endings": bool(element.get("normalize_line_endings")),
                 "ha_path": element["ha_path"],
                 "git_path": element["git_path"],
             }
@@ -2540,7 +2873,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/2.0.0"
+    server_version = "HomelabGitManagement/2.1.0"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 
@@ -2598,6 +2931,10 @@ class InterfaceHandler(BaseHTTPRequestHandler):
 
         if chemin.endswith("/api/diff"):
             gerer_diff(self)
+            return
+
+        if chemin.endswith("/api/backups"):
+            gerer_liste_sauvegardes(self)
             return
 
         if chemin.endswith("/health"):
@@ -2690,6 +3027,31 @@ class InterfaceHandler(BaseHTTPRequestHandler):
             cible = charge.get("target") if isinstance(charge, dict) else None
 
             succes, message_erreur = declencher_normalisation_git(cible)
+
+            if not succes:
+                self.repondre_json(502, {"ok": False, "error": message_erreur})
+                return
+
+            donnees = construire_etat()
+            self.repondre_json(200 if donnees.get("ok") else 503, donnees)
+            return
+
+        if chemin.endswith("/api/restore-backup"):
+
+            corps_requete = self.lire_corps_borne(REQUEST_PAYLOAD_MAX_BYTES)
+
+            if corps_requete is None:
+                return
+
+            try:
+                charge = json.loads(corps_requete)
+            except json.JSONDecodeError:
+                charge = {}
+
+            cible = charge.get("target") if isinstance(charge, dict) else None
+            nom_sauvegarde = charge.get("backup") if isinstance(charge, dict) else None
+
+            succes, message_erreur = declencher_restauration_sauvegarde(cible, nom_sauvegarde)
 
             if not succes:
                 self.repondre_json(502, {"ok": False, "error": message_erreur})

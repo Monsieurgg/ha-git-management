@@ -108,6 +108,10 @@ ALLOWED_KINDS = {"file", "directory"}
 
 ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
+# Exactly what creer_sauvegarde() names a backup file — validated before
+# ever building a path from a caller-supplied name (see restaurer_sauvegarde_locale()).
+BACKUP_NAME_PATTERN = re.compile(r"^\d{8}T\d{6}\.\d{6}Z-.+\.bak$")
+
 # Home Assistant's own core YAML files. Protected against Git -> HA
 # writes by default — see est_chemin_protege() — unless a mapping
 # explicitly opts out via protect_from_git: false, which the dashboard
@@ -222,6 +226,11 @@ for mapping in mappings:
     if protect_from_git is not None and not isinstance(protect_from_git, bool):
         erreur(f"{element_id}: invalid protect_from_git (must be true or false)")
 
+    normalize_line_endings = mapping.get("normalize_line_endings")
+
+    if normalize_line_endings is not None and not isinstance(normalize_line_endings, bool):
+        erreur(f"{element_id}: invalid normalize_line_endings (must be true or false)")
+
     elements.append(
         {
             "id": element_id,
@@ -230,6 +239,7 @@ for mapping in mappings:
             "ha_path": ha_path,
             "git_path": git_path,
             "protect_from_git": protect_from_git,
+            "normalize_line_endings": bool(normalize_line_endings),
         }
     )
 
@@ -693,6 +703,20 @@ def convention_fin_de_ligne(contenu: bytes) -> str:
         return "mixed"
 
     return "crlf" if total_crlf else "lf"
+
+
+def convertir_fin_de_ligne(contenu: bytes, convention_cible: str) -> bytes:
+    """Rewrites every line ending in `contenu` to match `convention_cible`
+    ("lf" or "crlf"). Used only by deployer_vers_git()'s opt-in
+    normalize_line_endings path — never applied silently by default, see
+    the line-ending mismatch guard there."""
+
+    normalise = normaliser_fins_ligne(contenu)
+
+    if convention_cible == "crlf":
+        return normalise.replace(b"\n", b"\r\n")
+
+    return normalise
 
 
 def classer_fichier(chemin_ha: Path, chemin_git: Path) -> str:
@@ -1214,6 +1238,105 @@ def creer_sauvegarde(element_id: str, cible: Path) -> Path:
     return sauvegarde
 
 
+def lister_sauvegardes(element_id: str) -> list[dict]:
+    """Lists a mapping's own local backups (see creer_sauvegarde(), which
+    is the only thing that ever writes one — on every git_to_ha deploy,
+    of the Home Assistant content about to be overwritten), newest first.
+    This is what the "restore a previous backup" UI lets a human pick
+    from — a recovery path that works even with no Git history at all,
+    since it never leaves this add-on's own data volume."""
+
+    repertoire = BACKUP_ROOT / element_id
+
+    if not repertoire.is_dir() or repertoire.is_symlink():
+        return []
+
+    resultats = []
+
+    for chemin in repertoire.iterdir():
+
+        if not chemin.is_file() or chemin.is_symlink():
+            continue
+
+        if not BACKUP_NAME_PATTERN.fullmatch(chemin.name):
+            continue
+
+        try:
+            stats = chemin.stat()
+        except OSError:
+            continue
+
+        resultats.append({
+            "name": chemin.name,
+            "size": stats.st_size,
+            "created_at": datetime.fromtimestamp(stats.st_mtime, tz=timezone.utc).isoformat(timespec="seconds"),
+        })
+
+    resultats.sort(key=lambda entree: entree["name"], reverse=True)
+
+    return resultats
+
+
+def restaurer_sauvegarde_locale(element: dict, nom_sauvegarde: str) -> None:
+    """Overwrites this mapping's current Home Assistant file with the
+    exact bytes of one of its own previous local backups. Respects the
+    same protect_from_git choice as a normal git_to_ha deploy — this is
+    still an automatic overwrite of the live Home Assistant file, just
+    sourced from this add-on's own backup archive instead of Git.
+    Backs up the content it is about to replace first, so a restore is
+    itself always undoable, exactly like any other deployment here."""
+
+    element_id = element["id"]
+
+    if element["kind"] == "directory":
+        raise RuntimeError("directory restore is not supported")
+
+    chemin_ha = convertir_chemin_ha(element["ha_path"])
+
+    if est_chemin_protege(element, chemin_ha):
+        raise RuntimeError(
+            "restore forbidden — this mapping is protected "
+            '(uncheck "Protect this file" on the mapping to allow it)'
+        )
+
+    if not BACKUP_NAME_PATTERN.fullmatch(nom_sauvegarde):
+        raise RuntimeError("invalid backup name")
+
+    repertoire = BACKUP_ROOT / element_id
+    chemin_sauvegarde = repertoire / nom_sauvegarde
+
+    verifier_chemin_resolu(chemin_sauvegarde, repertoire, f"/data/deploy-backups/{element_id}")
+
+    if chemin_sauvegarde.is_symlink() or not chemin_sauvegarde.is_file():
+        raise RuntimeError("backup not found")
+
+    verifier_chemin_resolu(chemin_ha, HA_ROOT, "/homeassistant")
+
+    if chemin_ha.is_symlink():
+        raise RuntimeError("Home Assistant target must not be a symlink")
+
+    if chemin_ha.exists() and not chemin_ha.is_file():
+        raise RuntimeError("existing Home Assistant target is not a file")
+
+    contenu_sauvegarde = chemin_sauvegarde.read_bytes()
+
+    if chemin_ha.exists():
+        creer_sauvegarde(element_id, chemin_ha)
+
+    mode_destination = (
+        stat.S_IMODE(chemin_ha.stat().st_mode) if chemin_ha.exists() else 0o644
+    )
+
+    log(f"[RESTORE] {element_id}: restoring from backup {nom_sauvegarde}")
+
+    ecrire_atomiquement(chemin_ha, contenu_sauvegarde, mode_destination)
+
+    if chemin_ha.read_bytes() != contenu_sauvegarde:
+        raise RuntimeError("post-restore verification failed")
+
+    log(f"[RESTORE] {element_id}: SUCCESS")
+
+
 ###############################################################################
 # ROLLBACK
 ###############################################################################
@@ -1460,11 +1583,27 @@ def _ecrire_commit_pousser_git(
     contenu_source: bytes,
     mode_destination: int,
     message_commit: str,
+    contenu_ha_reference: bytes | None = None,
 ) -> None:
     """Atomic write + commit + push + verify + automatic rollback on a
     failed push, factored out of deployer_vers_git() so
     normaliser_vers_git() can reuse the exact same machinery with its own
-    commit message, instead of duplicating this risk-bearing logic."""
+    commit message, instead of duplicating this risk-bearing logic.
+
+    `contenu_ha_reference` is what gets recorded as the "last known Home
+    Assistant content" sync-state reference — normally identical to
+    `contenu_source` (what actually gets written to Git), since a plain
+    push writes Home Assistant's own bytes verbatim. The one exception is
+    deployer_vers_git()'s opt-in line-ending normalization: there,
+    `contenu_source` has been rewritten to match Git's convention before
+    being pushed, but the real file sitting on the Home Assistant side
+    was never touched — recording the *unmodified* Home Assistant bytes
+    here (instead of the normalized ones) keeps the next comparison from
+    wrongly concluding Home Assistant "changed" the moment this push
+    completes."""
+
+    if contenu_ha_reference is None:
+        contenu_ha_reference = contenu_source
 
     nettoyer_verrou_residuel()
 
@@ -1540,7 +1679,7 @@ def _ecrire_commit_pousser_git(
             "post-push verification failed: Git content changed unexpectedly"
         )
 
-    enregistrer_synchronise(element_id, empreinte(contenu_source), empreinte(contenu_source))
+    enregistrer_synchronise(element_id, empreinte(contenu_ha_reference), empreinte(contenu_source))
 
     log(f"[PUSH] {element_id}: atomic write + commit + push: OK ({tete_apres[:12]})")
     log(f"[PUSH] {element_id}: SUCCESS")
@@ -1569,6 +1708,7 @@ def deployer_vers_git(element: dict, etat_synchro: str) -> None:
         )
 
     chemin_ha, chemin_git, contenu_source, contenu_git_actuel = _preparer_ecriture_git(element)
+    contenu_ha_reel = contenu_source
 
     if contenu_git_actuel is not None:
 
@@ -1582,19 +1722,29 @@ def deployer_vers_git(element: dict, etat_synchro: str) -> None:
                 and convention_nouvelle in {"lf", "crlf"}
                 and convention_existante != convention_nouvelle
             ):
-                raise RuntimeError(
-                    "line-ending mismatch: this file is tracked in Git with "
-                    f"{convention_existante.upper()} line endings, but the "
-                    f"current Home Assistant version uses "
-                    f"{convention_nouvelle.upper()} — pushing as-is would "
-                    "silently convert every line and bury the real change "
-                    "in a massive diff. This usually means the source file "
-                    "was edited or transferred through something that "
-                    "changes line endings (a Windows text editor, an SFTP "
-                    "client in text mode, a Samba mount, ...) rather than "
-                    "an intentional format change — fix the line endings "
-                    "at the source before pushing again"
-                )
+                if element.get("normalize_line_endings"):
+                    log(
+                        f"[PUSH] {element_id}: line-ending mismatch "
+                        f"({convention_nouvelle.upper()} -> {convention_existante.upper()}) "
+                        "normalized before push (normalize_line_endings is enabled "
+                        "for this mapping)"
+                    )
+                    contenu_source = convertir_fin_de_ligne(contenu_source, convention_existante)
+                else:
+                    raise RuntimeError(
+                        "line-ending mismatch: this file is tracked in Git with "
+                        f"{convention_existante.upper()} line endings, but the "
+                        f"current Home Assistant version uses "
+                        f"{convention_nouvelle.upper()} — pushing as-is would "
+                        "silently convert every line and bury the real change "
+                        "in a massive diff. This usually means the source file "
+                        "was edited or transferred through something that "
+                        "changes line endings (a Windows text editor, an SFTP "
+                        "client in text mode, a Samba mount, ...) rather than "
+                        "an intentional format change — fix the line endings "
+                        "at the source before pushing again, or enable "
+                        '"Auto-fix line endings on push" on this mapping'
+                    )
 
     mode_destination = (
         stat.S_IMODE(chemin_git.stat().st_mode) if chemin_git.exists() else 0o644
@@ -1605,6 +1755,7 @@ def deployer_vers_git(element: dict, etat_synchro: str) -> None:
     _ecrire_commit_pousser_git(
         element_id, chemin_git, contenu_source, mode_destination,
         f"Update {chemin_git_relatif} from Home Assistant",
+        contenu_ha_reference=contenu_ha_reel,
     )
 
 
@@ -1849,6 +2000,24 @@ def normaliser_git(target: str) -> None:
         erreur(f"{target}: {exc}")
 
 
+def restaurer_depuis_sauvegarde(target: str, nom_sauvegarde: str) -> None:
+    """Entry point for the "restore a previous backup" kebab-menu action."""
+
+    elements_par_id = {element["id"]: element for element in elements}
+
+    if target not in elements_par_id:
+        erreur(f"unmanaged element: {target}")
+
+    element = elements_par_id[target]
+
+    log(f"[COMMAND] restore from backup requested: {target} ({nom_sauvegarde})")
+
+    try:
+        restaurer_sauvegarde_locale(element, nom_sauvegarde)
+    except Exception as exc:
+        erreur(f"{target}: {exc}")
+
+
 def traiter_commande_stdin() -> None:
 
     if len(sys.argv) == 1:
@@ -1865,7 +2034,7 @@ def traiter_commande_stdin() -> None:
     if not isinstance(commande, dict):
         erreur("stdin command: expected a JSON object")
 
-    champs_autorises = {"command", "target", "confirm", "force", "sens"}
+    champs_autorises = {"command", "target", "confirm", "force", "sens", "backup"}
     champs_inconnus = set(commande) - champs_autorises
 
     if champs_inconnus:
@@ -1876,8 +2045,9 @@ def traiter_commande_stdin() -> None:
     confirmation = commande.get("confirm")
     forcer = commande.get("force", False)
     sens = commande.get("sens")
+    backup = commande.get("backup")
 
-    if action not in {"deploy", "acknowledge_git", "normalize_git"}:
+    if action not in {"deploy", "acknowledge_git", "normalize_git", "restore_backup"}:
         erreur(f"stdin command: unauthorized action: {action}")
 
     if (
@@ -1894,6 +2064,9 @@ def traiter_commande_stdin() -> None:
     if sens is not None and sens not in {"git_to_ha", "ha_to_git"}:
         erreur("stdin command: 'sens' must be 'git_to_ha' or 'ha_to_git'")
 
+    if action == "restore_backup" and (not isinstance(backup, str) or not backup):
+        erreur("stdin command: 'backup' is required for restore_backup")
+
     if action == "acknowledge_git":
         acquitter_git(target)
         return
@@ -1903,6 +2076,10 @@ def traiter_commande_stdin() -> None:
 
     if action == "normalize_git":
         normaliser_git(target)
+        return
+
+    if action == "restore_backup":
+        restaurer_depuis_sauvegarde(target, backup)
         return
 
     deployer_element(target, confirmation, forcer, sens)
