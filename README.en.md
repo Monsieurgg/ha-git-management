@@ -115,11 +115,13 @@ mappings:
   silently overwriting an edit made directly on GitHub. See `DOCS.md` for
   the full detail.
 
-Home Assistant's own `configuration.yaml`, `scripts.yaml`,
-`automations.yaml` and `scenes.yaml` are always protected against
-`git_to_ha` deployment, regardless of what you map them to — you can still
-map them for *comparison* (to see drift), just never for automatic
-deployment.
+Protection against `git_to_ha` deployment is now a per-mapping choice (a
+checkbox in the dashboard's mapping form), not limited to a fixed list.
+By default, Home Assistant's own `configuration.yaml`, `scripts.yaml`,
+`automations.yaml` and `scenes.yaml` stay protected with no action
+needed — but that default can be turned off explicitly (with a strong
+warning and an extra confirmation), and any other file can just as
+easily be protected the same way. See `DOCS.md`.
 
 ## Security
 

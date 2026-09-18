@@ -108,10 +108,10 @@ ALLOWED_KINDS = {"file", "directory"}
 
 ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
-# Home Assistant's core YAML files are always protected against Git -> HA
-# writes, no matter what a mapping declares. This is independent of the
-# options a user configures: a mistake in the mappings list must never be
-# able to overwrite these.
+# Home Assistant's own core YAML files. Protected against Git -> HA
+# writes by default — see est_chemin_protege() — unless a mapping
+# explicitly opts out via protect_from_git: false, which the dashboard
+# only ever allows after a strong, explicit warning.
 PROTECTED_HA_PATHS = {
     HA_ROOT / "configuration.yaml",
     HA_ROOT / "scripts.yaml",
@@ -203,8 +203,9 @@ for mapping in mappings:
     if direction not in IMPLEMENTED_DIRECTIONS:
         erreur(
             f"{element_id}: direction '{direction}' is not implemented in "
-            "this version (only git_to_ha is supported today) — remove "
-            "this mapping or set direction: git_to_ha"
+            f"this version (only {', '.join(sorted(IMPLEMENTED_DIRECTIONS))} "
+            "are supported today) — remove this mapping or change its "
+            "direction"
         )
 
     ha_path = mapping.get("ha_path")
@@ -216,6 +217,11 @@ for mapping in mappings:
     if not isinstance(git_path, str) or not git_path.strip():
         erreur(f"{element_id}: invalid git_path")
 
+    protect_from_git = mapping.get("protect_from_git")
+
+    if protect_from_git is not None and not isinstance(protect_from_git, bool):
+        erreur(f"{element_id}: invalid protect_from_git (must be true or false)")
+
     elements.append(
         {
             "id": element_id,
@@ -223,6 +229,7 @@ for mapping in mappings:
             "direction": direction,
             "ha_path": ha_path,
             "git_path": git_path,
+            "protect_from_git": protect_from_git,
         }
     )
 
@@ -287,7 +294,26 @@ def verifier_chemin_resolu(chemin: Path, racine: Path, nom_racine: str) -> None:
         ) from exc
 
 
-def est_chemin_protege(chemin_ha: Path) -> bool:
+def est_chemin_protege(element: dict, chemin_ha: Path) -> bool:
+    """Whether this mapping's Home Assistant target is protected against
+    git_to_ha writes. A mapping's own explicit protect_from_git choice
+    (set from the "Protect this file" checkbox in the dashboard, or
+    directly in options.json/the native Configuration tab) always wins.
+    Only when no explicit choice was ever recorded — a mapping created
+    before this option existed, or one where the field was simply
+    omitted — does this fall back to protecting Home Assistant's own
+    four core YAML files by default, exactly as before this option
+    existed. This fallback is deliberately the only thing keeping those
+    four files safe by default now: unlike earlier versions, a mapping
+    CAN explicitly disable it (the dashboard warns strongly before
+    allowing that) — the safety net here is "protected unless you say
+    otherwise", not "always protected no matter what"."""
+
+    valeur = element.get("protect_from_git")
+
+    if isinstance(valeur, bool):
+        return valeur
+
     return chemin_ha.resolve() in {p.resolve() for p in PROTECTED_HA_PATHS}
 
 
@@ -1249,10 +1275,10 @@ def deployer_fichier(element: dict, etat: str) -> None:
     chemin_ha = convertir_chemin_ha(element["ha_path"])
     chemin_git = convertir_chemin_git(element["git_path"])
 
-    if est_chemin_protege(chemin_ha):
+    if est_chemin_protege(element, chemin_ha):
         raise RuntimeError(
-            "this file is a core Home Assistant file and is always "
-            "protected against Git -> HA deployment"
+            "this mapping is protected against Git -> HA deployment "
+            "(uncheck \"Protect this file\" on the mapping to allow it)"
         )
 
     if element["kind"] == "directory":
@@ -1580,8 +1606,8 @@ def deployer_element(
 
         chemin_ha = convertir_chemin_ha(element["ha_path"])
 
-        if est_chemin_protege(chemin_ha):
-            erreur(f"{target}: deployment forbidden — protected core file")
+        if est_chemin_protege(element, chemin_ha):
+            erreur(f"{target}: deployment forbidden — this mapping is protected")
 
         if etat in {"identical", "equivalent"}:
             log(f"[COMMAND] {target}: no deployment needed; state={etat}")
@@ -1647,8 +1673,8 @@ def deployer_element(
 
             chemin_ha = convertir_chemin_ha(element["ha_path"])
 
-            if est_chemin_protege(chemin_ha):
-                erreur(f"{target}: deployment forbidden — protected core file")
+            if est_chemin_protege(element, chemin_ha):
+                erreur(f"{target}: deployment forbidden — this mapping is protected")
 
             if etat in {"identical", "equivalent"}:
                 log(f"[COMMAND] {target}: no deployment needed; state={etat}")

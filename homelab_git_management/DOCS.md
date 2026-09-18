@@ -31,6 +31,7 @@ Each entry under `mappings`:
 | `ha_path` | string | Absolute path under `/config`. |
 | `git_path` | string | Path relative to the repository root. |
 | `direction` | `git_to_ha` \| `ha_to_git` \| `bidirectional` | All three are implemented. |
+| `protect_from_git` | boolean | Optional. Blocks this mapping from ever being deployed to (Git → Home Assistant) when `true`. Defaults to `true` for `configuration.yaml`/`scripts.yaml`/`automations.yaml`/`scenes.yaml` and `false` for everything else if omitted. See [Protected files](#protected-files). |
 
 ## Managing mappings from the dashboard
 
@@ -181,14 +182,28 @@ written or deployed.
 - **error** — the path could not be checked (permissions, symlink, path
   escaping its root, etc.). Always treated as blocking.
 
-## Protected core files
+## Protected files
+
+Every mapping has its own `protect_from_git` choice: `true` blocks that
+mapping from ever being deployed to (Git → Home Assistant), `false`
+allows it. Set from the "🔒 Protect this file" checkbox in the
+dashboard's mapping form, or directly as a field on the mapping.
 
 `configuration.yaml`, `scripts.yaml`, `automations.yaml` and `scenes.yaml`
-under `/config` can never be deployed to by this add-on, even if you map
-them with `direction: git_to_ha`. They can still be mapped for comparison,
-and for `direction: ha_to_git` — that direction only ever reads them, it
-never writes to Home Assistant, so the protection (which is specifically
-about never overwriting these files) does not apply to it.
+under `/config` are protected **by default** — if a mapping never sets
+`protect_from_git` at all (the field is entirely absent, which is what
+you get from a mapping written before this option existed, or one added
+by hand in the native Configuration tab without mentioning it), these
+four are still treated as protected and everything else as not, exactly
+as in earlier versions. This default can be turned off explicitly for
+any of the four, but the dashboard shows a strong warning and asks for
+an extra confirmation before allowing that — it is a real safety net
+being given up on purpose, not a technicality.
+
+This protection is specifically about writing to Home Assistant. A
+`direction: ha_to_git` mapping only ever reads these files, so the
+setting has no effect there; it matters for `git_to_ha` and for the
+Deploy side of `bidirectional`.
 
 ## Deployment safety
 

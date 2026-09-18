@@ -2,6 +2,32 @@
 
 All notable changes to this add-on are documented here.
 
+## 1.3.0 — configurable per-mapping protection
+
+- Protection against Git → Home Assistant overwrites is now a per-mapping
+  choice (`protect_from_git: true/false`), set from a checkbox in the
+  dashboard's mapping form, instead of being hardcoded for exactly four
+  files. Any mapping can now be protected, not just Home Assistant's own
+  `configuration.yaml` / `scripts.yaml` / `automations.yaml` /
+  `scenes.yaml`.
+- Those four files remain protected **by default** — nothing changes for
+  existing mappings, or new ones, unless someone explicitly touches the
+  checkbox — but this default can now be turned off. The dashboard shows
+  a strong warning banner the moment protection is off on one of these
+  four files, and requires an extra explicit confirmation before saving
+  that state, on top of the confirmation the Deploy button itself already
+  asks for. This is an intentional, informed choice to give up a real
+  safety net; there is no hidden default that silently restores it later.
+- When adding a mapping through the dashboard, the checkbox defaults to
+  checked automatically as soon as the Home Assistant path matches one of
+  those four files, and the checkbox only appears at all for a mapping
+  whose direction can actually write to Home Assistant (`git_to_ha` or
+  `bidirectional` — it has no effect on a pure `ha_to_git` mapping).
+- A mapping added directly through the native Configuration tab (raw
+  YAML, no `protect_from_git` field at all) keeps exactly the previous
+  behavior: protected by default for those four files, unprotected for
+  everything else.
+
 ## 1.2.0 — bidirectional
 
 - New: `direction: bidirectional` is now implemented. A mapping

@@ -9,7 +9,7 @@
 # =============================================================================
 
 name: "Homelab Git Management"
-version: "1.2.0"
+version: "1.3.0"
 slug: "homelab_git_management"
 
 description: >-
@@ -79,3 +79,4 @@ schema:
       ha_path: "str"
       git_path: "str"
       direction: "list(git_to_ha|ha_to_git|bidirectional)"
+      protect_from_git: "bool?"

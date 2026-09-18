@@ -360,6 +360,14 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
         <input id="mapping-git-path" type="text" class="form-input" placeholder="themes/...">
         <button type="button" class="browse-btn" data-root="git" data-i18n="browse">Browse…</button>
       </div>
+
+      <div id="mapping-protect-row" class="field-row" hidden>
+        <label>
+          <input id="mapping-protect" type="checkbox">
+          <span id="mapping-protect-label" data-i18n="field_protect">Protect this file from being overwritten by Git</span>
+        </label>
+      </div>
+      <div id="mapping-protect-warning" class="error"></div>
     </div>
     <div class="modal-footer">
       <button id="mapping-cancel" type="button" data-i18n="cancel">Cancel</button>
@@ -481,6 +489,9 @@ const STRINGS = {
     mapping_modal_add: "Add a mapping", mapping_modal_edit: "Edit mapping",
     field_id: "Identifier", field_kind: "Type", field_direction: "Direction",
     field_ha_path: "Home Assistant path", field_git_path: "Git path",
+    field_protect: "🔒 Protect this file — never let Deploy/Git overwrite it",
+    mapping_protect_warning: "⚠️ This is one of Home Assistant's own core config files. Leaving it unprotected is strongly discouraged: a failed deployment here could break your whole Home Assistant instance.",
+    confirm_unprotect_core: "You are about to save \"{target}\" WITHOUT protection, on a core Home Assistant config file. This is strongly discouraged — a bad deployment could break your Home Assistant instance. Continue anyway?",
     kind_file: "File", kind_directory: "Directory (comparison only)",
     dir_git_to_ha: "Git -> Home Assistant",
     dir_ha_to_git: "Home Assistant -> Git",
@@ -556,6 +567,9 @@ const STRINGS = {
     mapping_modal_add: "Ajouter un mapping", mapping_modal_edit: "Modifier le mapping",
     field_id: "Identifiant", field_kind: "Type", field_direction: "Direction",
     field_ha_path: "Chemin Home Assistant", field_git_path: "Chemin Git",
+    field_protect: "🔒 Protéger ce fichier — ne jamais laisser Déployer/Git l'écraser",
+    mapping_protect_warning: "⚠️ Ceci est l'un des fichiers de configuration essentiels de Home Assistant. Le laisser sans protection est fortement déconseillé : un déploiement raté ici pourrait casser toute votre instance Home Assistant.",
+    confirm_unprotect_core: "Vous êtes sur le point d'enregistrer « {target} » SANS protection, sur un fichier de configuration essentiel de Home Assistant. C'est fortement déconseillé — un mauvais déploiement pourrait casser votre instance Home Assistant. Continuer quand même ?",
     kind_file: "Fichier", kind_directory: "Dossier (comparaison uniquement)",
     dir_git_to_ha: "Git -> Home Assistant",
     dir_ha_to_git: "Home Assistant -> Git",
@@ -773,7 +787,47 @@ function copierMappingsPourEnvoi() {
   return mappingsActuels.map((mapping) => ({
     id: mapping.id, kind: mapping.kind, direction: mapping.direction,
     ha_path: mapping.ha_path, git_path: mapping.git_path,
+    protect_from_git: !!mapping.protected,
   }));
+}
+
+// Home Assistant's own core config files. Used only to suggest a sensible
+// default for the "protect this file" checkbox and to show the strong
+// warning below — the real, authoritative protection decision is always
+// whatever gestionnaire.py reads from the mapping's own protect_from_git
+// field (or its own fallback for the same four files if that field was
+// never set at all).
+const CORE_HA_PATHS = [
+  "/config/configuration.yaml", "/config/scripts.yaml",
+  "/config/automations.yaml", "/config/scenes.yaml",
+];
+
+function estCheminEssentiel(chemin) {
+  return CORE_HA_PATHS.includes((chemin || "").trim());
+}
+
+function appliquerDefautProtection() {
+  if (mappingEnEdition) return; // never override an existing mapping's own stored choice
+  const direction = el("mapping-direction").value;
+  if (direction !== "git_to_ha" && direction !== "bidirectional") return;
+  el("mapping-protect").checked = estCheminEssentiel(el("mapping-ha-path").value);
+}
+
+function mettreAJourAvertissementProtection() {
+  const direction = el("mapping-direction").value;
+  const directionConcernee = direction === "git_to_ha" || direction === "bidirectional";
+  const estEssentiel = estCheminEssentiel(el("mapping-ha-path").value);
+
+  el("mapping-protect-row").hidden = !directionConcernee;
+
+  const avertissement = el("mapping-protect-warning");
+
+  if (directionConcernee && estEssentiel && !el("mapping-protect").checked) {
+    avertissement.textContent = t("mapping_protect_warning");
+    avertissement.style.display = "block";
+  } else {
+    avertissement.style.display = "none";
+  }
 }
 
 function ouvrirModalMapping(mapping) {
@@ -790,6 +844,9 @@ function ouvrirModalMapping(mapping) {
   el("mapping-direction").value = mapping ? mapping.direction : "git_to_ha";
   el("mapping-ha-path").value = mapping ? mapping.ha_path : "";
   el("mapping-git-path").value = mapping ? mapping.git_path : "";
+  el("mapping-protect").checked = mapping ? !!mapping.protected : false;
+
+  mettreAJourAvertissementProtection();
 
   el("mapping-modal").hidden = false;
 }
@@ -845,7 +902,14 @@ async function sauvegarderMapping() {
     return;
   }
 
-  const nouveauMapping = { id, kind, direction, ha_path: haPath, git_path: gitPath };
+  const protectFromGit = el("mapping-protect").checked;
+  const directionConcernee = direction === "git_to_ha" || direction === "bidirectional";
+
+  if (directionConcernee && estCheminEssentiel(haPath) && !protectFromGit) {
+    if (!window.confirm(t("confirm_unprotect_core").replace("{target}", id))) return;
+  }
+
+  const nouveauMapping = { id, kind, direction, ha_path: haPath, git_path: gitPath, protect_from_git: protectFromGit };
   const listeExistante = copierMappingsPourEnvoi();
 
   const nouvelleListe = mappingEnEdition
@@ -992,6 +1056,8 @@ async function chargerBrowse() {
 function selectionnerCheminBrowse(chemin) {
   if (browseRacine === "ha") {
     el("mapping-ha-path").value = chemin;
+    appliquerDefautProtection();
+    mettreAJourAvertissementProtection();
   } else {
     el("mapping-git-path").value = chemin;
   }
@@ -1327,6 +1393,16 @@ el("add-mapping").addEventListener("click", () => ouvrirModalMapping(null));
 el("mapping-modal-close").addEventListener("click", fermerModalMapping);
 el("mapping-cancel").addEventListener("click", fermerModalMapping);
 el("mapping-save").addEventListener("click", sauvegarderMapping);
+
+el("mapping-direction").addEventListener("change", () => {
+  appliquerDefautProtection();
+  mettreAJourAvertissementProtection();
+});
+el("mapping-ha-path").addEventListener("input", () => {
+  appliquerDefautProtection();
+  mettreAJourAvertissementProtection();
+});
+el("mapping-protect").addEventListener("change", mettreAJourAvertissementProtection);
 
 document.querySelectorAll(".browse-btn").forEach((bouton) => {
   bouton.addEventListener("click", () => {
@@ -1774,8 +1850,8 @@ def valider_mappings_proposes(module, mappings_proposes: list) -> list:
         if direction not in module.IMPLEMENTED_DIRECTIONS:
             raise ValueError(
                 f"{element_id}: direction '{direction}' is not supported yet "
-                "(only git_to_ha is implemented) — this would stop the "
-                "engine from starting at all if saved"
+                f"(implemented: {', '.join(sorted(module.IMPLEMENTED_DIRECTIONS))}) "
+                "— this would stop the engine from starting at all if saved"
             )
 
         ha_path = entree.get("ha_path")
@@ -1793,16 +1869,10 @@ def valider_mappings_proposes(module, mappings_proposes: list) -> list:
         chemin_git = module.convertir_chemin_git(git_path)
         module.verifier_chemin_resolu(chemin_git, module.GIT_ROOT, "/data/repository")
 
-        if (
-            kind == "file"
-            and direction in {"git_to_ha", "bidirectional"}
-            and module.est_chemin_protege(chemin_ha)
-        ):
-            raise ValueError(
-                f"{element_id}: this is a core Home Assistant config file "
-                "and can never be deployed to from Git (it can still be "
-                "tracked read-only, e.g. with direction: ha_to_git)"
-            )
+        protect_from_git = entree.get("protect_from_git")
+
+        if protect_from_git is not None and not isinstance(protect_from_git, bool):
+            raise ValueError(f"{element_id}: invalid protect_from_git (must be true or false)")
 
         # A mapping's ha_path/git_path are picked independently (two
         # separate browse dialogs), so nothing before this enforced they
@@ -1838,6 +1908,7 @@ def valider_mappings_proposes(module, mappings_proposes: list) -> list:
             "ha_path": ha_path.strip(),
             "git_path": git_path.strip(),
             "direction": direction,
+            "protect_from_git": protect_from_git,
         })
 
     return resultat
@@ -2230,7 +2301,7 @@ def construire_etat() -> dict:
         element_id = element["id"]
         etat = gestionnaire.resultats_comparaison.get(element_id, "unknown")
         chemin_ha = gestionnaire.convertir_chemin_ha(element["ha_path"])
-        protege = gestionnaire.est_chemin_protege(chemin_ha)
+        protege = gestionnaire.est_chemin_protege(element, chemin_ha)
         direction = element["direction"]
         kind = element["kind"]
 
@@ -2307,7 +2378,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/1.2.0"
+    server_version = "HomelabGitManagement/1.3.0"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 

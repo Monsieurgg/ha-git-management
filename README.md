@@ -122,11 +122,13 @@ mappings:
   plutôt que d'écraser silencieusement un changement fait directement sur
   GitHub. Voir `DOCS.md` pour le détail complet.
 
-Les fichiers `configuration.yaml`, `scripts.yaml`, `automations.yaml` et
-`scenes.yaml` propres à Home Assistant sont toujours protégés contre un
-déploiement `git_to_ha`, quel que soit le mapping — vous pouvez toujours
-les mapper pour la *comparaison* (voir les écarts), mais jamais pour un
-déploiement automatique.
+La protection contre un déploiement `git_to_ha` est désormais un choix par
+mapping (case à cocher dans le formulaire du tableau de bord), pas limité
+à une liste figée. Par défaut, `configuration.yaml`, `scripts.yaml`,
+`automations.yaml` et `scenes.yaml` restent protégés sans rien faire —
+mais ce choix peut être désactivé explicitement (avec un avertissement
+fort et une confirmation supplémentaire), et n'importe quel autre fichier
+peut au contraire être protégé de la même façon. Voir `DOCS.md`.
 
 ## Sécurité
 
