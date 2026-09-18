@@ -1334,6 +1334,20 @@ def restaurer_sauvegarde_locale(element: dict, nom_sauvegarde: str) -> None:
     if chemin_ha.read_bytes() != contenu_sauvegarde:
         raise RuntimeError("post-restore verification failed")
 
+    if element["direction"] == "bidirectional":
+        # A restore doesn't come from Git, so Home Assistant's new
+        # content and Git's current content are almost certainly not
+        # equal — record each side's real, independent hash (like
+        # acquitter_git() does), instead of assuming the two now match
+        # the way a normal git_to_ha deploy would.
+        chemin_git = convertir_chemin_git(element["git_path"])
+        contenu_git_actuel = chemin_git.read_bytes() if chemin_git.exists() else None
+        enregistrer_synchronise(
+            element_id,
+            empreinte(contenu_sauvegarde),
+            empreinte(contenu_git_actuel) if contenu_git_actuel is not None else "",
+        )
+
     log(f"[RESTORE] {element_id}: SUCCESS")
 
 

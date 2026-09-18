@@ -9,7 +9,7 @@
 # =============================================================================
 
 name: "Homelab Git Management"
-version: "2.1.0"
+version: "2.2.0"
 slug: "homelab_git_management"
 
 description: >-
@@ -37,6 +37,17 @@ ingress_port: 8099
 panel_title: "Homelab Git Management"
 panel_icon: "mdi:source-branch"
 panel_admin: true
+
+# Grants access to Home Assistant Core's own REST API through the
+# Supervisor proxy (http://supervisor/core/api/...), using this add-on's
+# own Supervisor token — the same token already used for the self-scoped
+# options/restart API above, not a new credential. Added in 2.2.0 for two
+# purposes only: checking whether a deployed configuration is still valid
+# (POST /api/config/core/check_config) and creating a persistent
+# notification when a push/deploy fails or is auto-rolled-back
+# (POST /api/services/persistent_notification/create). Never used to read
+# or change entities, automations, or anything else in Home Assistant.
+homeassistant_api: true
 
 # The add-on writes to Home Assistant's own config directory only, since
 # the deploy engine's job is to copy files from the Git clone into it.

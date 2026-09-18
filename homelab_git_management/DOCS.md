@@ -146,6 +146,27 @@ history isn't the fastest way back. The current content is itself backed
 up first, so a restore is always undoable too, and it respects
 `protect_from_git` exactly like a normal deploy would.
 
+**Config validation and automatic rollback.** Right after any write into
+Home Assistant (a `git_to_ha` deploy, or the Deploy side of a
+`bidirectional` mapping) writes and verifies its bytes correctly, the
+add-on additionally asks Home Assistant Core itself whether the
+resulting configuration is still valid
+(`POST /api/config/core/check_config`, via the `homeassistant_api`
+permission described in [Exposure and
+authentication](#exposure-and-authentication)). If Core says it isn't,
+the add-on automatically restores the backup that same deploy just
+created — the exact mechanism described above — before the broken
+configuration ever gets the chance to actually be loaded, and creates a
+Home Assistant persistent notification saying so. If no backup exists
+yet for that mapping (its very first deploy), the write is left in
+place — nothing to safely roll back to — and both the notification and
+the dashboard say so plainly instead of reporting a plain success. This
+check is best-effort and never punishes a deploy whose write already
+succeeded: if Home Assistant Core's API can't be reached at all (for
+example, Core is itself mid-restart), the deploy is reported as
+successful exactly as it would be without this feature — only an actual
+"invalid" verdict from Core ever triggers the rollback above.
+
 **The one exception to "no file content is ever shown."** The Resolve
 screen above is the single place in this add-on where real file content
 reaches the browser, instead of only comparison metadata. It is scoped
@@ -240,6 +261,19 @@ and session-scoped, and nothing outside an authenticated admin session can
 reach them. Every payload they do accept is still independently bounded in
 size and re-validated against the engine's own rules before anything is
 written or deployed.
+
+**Home Assistant Core API access.** Since 2.2.0, this add-on also
+declares `homeassistant_api: true`, which lets it reach Home Assistant
+Core's own REST API through the Supervisor proxy
+(`http://supervisor/core/api/...`), using the same Supervisor token
+already used for the self-scoped options/restart API above — not a
+separate credential. This is used for exactly two calls, both described
+under [Config validation and automatic
+rollback](#config-validation-and-automatic-rollback) below:
+`POST /api/config/core/check_config` and
+`POST /api/services/persistent_notification/create`. Nothing here ever
+reads or changes an entity, automation, or any other part of Home
+Assistant's own state.
 
 ## Comparison states
 

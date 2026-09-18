@@ -2,6 +2,45 @@
 
 All notable changes to this add-on are documented here.
 
+## 2.2.0 — config check + auto-rollback, Home Assistant notifications
+
+- **New permission:** `homeassistant_api: true`. This grants access to
+  Home Assistant Core's own REST API through the Supervisor proxy
+  (`http://supervisor/core/api/...`), using this add-on's existing
+  Supervisor token — not a new credential, and never used to read or
+  change entities, automations, or anything else in Home Assistant.
+  Used for exactly two things, both below.
+- New: after any write into Home Assistant (a `git_to_ha` deploy, or the
+  Deploy side of a `bidirectional` mapping), the add-on now calls Home
+  Assistant Core's own config-check endpoint
+  (`POST /api/config/core/check_config`). If Core reports the resulting
+  configuration invalid, the add-on automatically restores the backup
+  that same deploy already created (see 2.1.0's backup-restore feature)
+  — before the new, broken configuration ever gets the chance to be
+  loaded. If no backup exists yet (a mapping's very first deploy), the
+  write itself still succeeded and is left in place, but the response
+  says so plainly instead of silently declaring success. This check is
+  best-effort: if Core's API can't be reached at all (e.g. Core is
+  itself restarting), nothing here blocks a deploy whose bytes already
+  wrote and verified correctly — the check only ever turns a deploy
+  into a failure on an actual "invalid" verdict from Core, never on its
+  own unavailability.
+- New: a Home Assistant persistent notification is created whenever the
+  check above finds an invalid configuration — whether or not a backup
+  was available to auto-restore — so this is visible from Home
+  Assistant itself without needing this add-on's own dashboard open.
+  Scoped narrowly to this one situation for now (not every possible
+  push/deploy rejection), since most of those are already safely
+  blocked, no-side-effect refusals that don't need a stand-alone
+  notification.
+- Fixed as part of this work: restoring a previous backup (2.1.0) on a
+  `bidirectional` mapping now correctly re-seeds that mapping's
+  conflict-tracking reference to reflect each side's real, independent
+  content after the restore, instead of leaving a stale reference that
+  could make the very next comparison wrongly report a conflict. The
+  same fix that made the opt-in line-ending normalization (2.1.0) safe
+  applies here for the same underlying reason.
+
 ## 2.1.0 — diff preview, backup restore, opt-in line-ending fix
 
 - New: **preview a difference before deploying/pushing normally.** The

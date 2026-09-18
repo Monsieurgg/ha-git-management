@@ -2399,6 +2399,92 @@ def redemarrer_soi_meme() -> None:
         pass
 
 
+###############################################################################
+# HOME ASSISTANT CORE API (config check + notifications)
+#
+# Both reach Home Assistant Core itself, through the Supervisor proxy at
+# http://supervisor/core/api/... — a different, wider grant
+# (homeassistant_api: true) than the self-scoped Supervisor API above.
+# Both are best-effort conveniences: neither one is ever allowed to turn
+# an otherwise-successful write into a failure just because Home
+# Assistant Core happened to be briefly unreachable (e.g. restarting).
+###############################################################################
+
+def verifier_config_ha() -> tuple[bool, str | None]:
+    """Calls Home Assistant Core's own config-check endpoint
+    (POST /api/config/core/check_config) right after a write into Home
+    Assistant, to catch a configuration Core itself would refuse to load
+    — before it ever gets the chance to. Returns (True, None) when valid
+    *or* when the check could not be reached at all (nothing here should
+    block a deploy whose bytes already wrote and verified correctly just
+    because this optional extra check was unreachable); returns
+    (False, message) only on a genuine "invalid" verdict from Core."""
+
+    token = os.environ.get("SUPERVISOR_TOKEN")
+
+    if not token:
+        return True, None
+
+    requete = urllib.request.Request(
+        f"{SUPERVISOR_API}/core/api/config/core/check_config",
+        data=b"",
+        method="POST",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+
+    try:
+        with urllib.request.urlopen(requete, timeout=30) as reponse:
+            resultat = json.loads(reponse.read())
+    except Exception as exc:
+        print(
+            f"[homelab-git-management] [interface] WARNING: could not reach "
+            f"Home Assistant's config check: {exc}",
+            flush=True,
+        )
+        return True, None
+
+    if resultat.get("result") == "invalid":
+        return False, resultat.get("errors") or "Home Assistant reports the configuration is invalid"
+
+    return True, None
+
+
+def envoyer_notification_ha(notification_id: str, titre: str, message: str) -> None:
+    """Creates (or replaces, same notification_id) a Home Assistant
+    persistent notification, so a push/deploy failure or an
+    auto-rollback is visible from Home Assistant itself, not only from
+    this add-on's own dashboard. Best-effort and silent on failure —
+    never raises, never affects the outcome of the action it reports on,
+    which has already happened by the time this is called."""
+
+    token = os.environ.get("SUPERVISOR_TOKEN")
+
+    if not token:
+        return
+
+    corps = json.dumps({
+        "notification_id": f"homelab_git_management_{notification_id}",
+        "title": titre,
+        "message": message,
+    }).encode("utf-8")
+
+    requete = urllib.request.Request(
+        f"{SUPERVISOR_API}/core/api/services/persistent_notification/create",
+        data=corps,
+        method="POST",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+
+    try:
+        urllib.request.urlopen(requete, timeout=10)
+    except Exception as exc:
+        print(
+            f"[homelab-git-management] [interface] WARNING: could not create "
+            f"Home Assistant notification: {exc}",
+            flush=True,
+        )
+
+
 def mappings_correspondent(actuels: object, attendus: list) -> bool:
     """Structural comparison used only to detect whether the just-written
     mappings have become visible yet — not a validation function."""
@@ -2650,7 +2736,70 @@ def declencher_deploiement(
         return False, f"{type(exc).__name__}: {exc}"
 
     print(sortie_capturee.getvalue(), end="", flush=True)
-    return True, None
+
+    elements_par_id = {element["id"]: element for element in module.elements}
+    element = elements_par_id.get(cible)
+
+    ecrit_vers_ha = element is not None and (
+        element["direction"] == "git_to_ha"
+        or (element["direction"] == "bidirectional" and sens == "git_to_ha")
+    )
+
+    if not ecrit_vers_ha:
+        return True, None
+
+    # This write already succeeded and verified byte-for-byte — from
+    # here on, we're checking whether the *result* is a configuration
+    # Home Assistant Core can actually load, and rolling back to the
+    # backup this same deploy just made (see gestionnaire.deployer_fichier)
+    # if not. A best-effort extra safety net, never a reason to fail a
+    # deploy whose own write already succeeded, if this check itself
+    # can't be reached.
+    valide, erreur_config = verifier_config_ha()
+
+    if valide:
+        return True, None
+
+    sauvegardes = module.lister_sauvegardes(cible)
+
+    if not sauvegardes:
+        envoyer_notification_ha(
+            f"config_invalid_{cible}",
+            "Homelab Git Management: invalid configuration",
+            f'Deploying "{cible}" left Home Assistant\'s configuration invalid '
+            f"({erreur_config}), and no backup exists to restore automatically — "
+            "manual intervention is needed.",
+        )
+        return False, (
+            f"deployed, but Home Assistant reports the new configuration is invalid "
+            f"({erreur_config}) — no backup exists to auto-restore"
+        )
+
+    try:
+        module.restaurer_sauvegarde_locale(element, sauvegardes[0]["name"])
+    except Exception as exc:
+        envoyer_notification_ha(
+            f"config_invalid_{cible}",
+            "Homelab Git Management: invalid configuration",
+            f'Deploying "{cible}" left Home Assistant\'s configuration invalid '
+            f"({erreur_config}), and the automatic rollback also failed ({exc}) — "
+            "manual intervention is needed.",
+        )
+        return False, (
+            f"deployed, but Home Assistant reports the new configuration is invalid "
+            f"({erreur_config}), and the automatic rollback failed: {exc}"
+        )
+
+    envoyer_notification_ha(
+        f"config_invalid_{cible}",
+        "Homelab Git Management: deploy rolled back",
+        f'Deploying "{cible}" left Home Assistant\'s configuration invalid '
+        f"({erreur_config}). The previous version has been restored automatically.",
+    )
+    return False, (
+        f"deploy rolled back: Home Assistant reports the new configuration is invalid "
+        f"({erreur_config}); the previous version has been restored"
+    )
 
 
 ###############################################################################
@@ -2873,7 +3022,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/2.1.0"
+    server_version = "HomelabGitManagement/2.2.0"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 
