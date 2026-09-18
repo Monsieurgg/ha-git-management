@@ -40,6 +40,10 @@ All notable changes to this add-on are documented here.
   could make the very next comparison wrongly report a conflict. The
   same fix that made the opt-in line-ending normalization (2.1.0) safe
   applies here for the same underlying reason.
+- A small "☕ Buy me a beer" link now sits in the dashboard's own header,
+  next to the language and Refresh buttons — previously only on the
+  GitHub repository page, which most people using the add-on day to day
+  never see.
 
 ## 2.1.0 — diff preview, backup restore, opt-in line-ending fix
 

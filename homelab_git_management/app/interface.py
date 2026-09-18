@@ -103,7 +103,11 @@ body { margin: 0; background: var(--bg); color: var(--text);
 .header { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 18px; flex-wrap: wrap; }
 .header-title h1 { margin: 0; font-size: 25px; line-height: 1.2; }
 .header-title p { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
-.header-actions { display: flex; gap: 8px; }
+.header-actions { display: flex; gap: 8px; align-items: center; }
+.header-link { border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  border-radius: 10px; padding: 10px 15px; font: inherit; text-decoration: none;
+  display: inline-flex; align-items: center; line-height: 1; }
+.header-link:hover { border-color: var(--accent); }
 button { border: 1px solid var(--border); background: var(--surface); color: var(--text);
   border-radius: 10px; padding: 10px 15px; cursor: pointer; font: inherit; }
 button:hover { border-color: var(--accent); }
@@ -233,6 +237,7 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
       <p data-i18n="subtitle">Git &lt;-&gt; Home Assistant control</p>
     </div>
     <div class="header-actions">
+      <a class="header-link" href="https://www.buymeacoffee.com/Monsieurgg" target="_blank" rel="noopener" data-i18n="buy_me_a_beer">☕ Buy me a beer</a>
       <button id="lang-toggle" type="button"></button>
       <button id="refresh" data-i18n="refresh" hidden>Refresh</button>
     </div>
@@ -471,6 +476,7 @@ const STRINGS = {
     title: "Homelab Git Management",
     subtitle: "Git <-> Home Assistant control",
     refresh: "Refresh", refreshing: "Refreshing...",
+    buy_me_a_beer: "☕ Buy me a beer",
     readonly_banner: "The Refresh button updates the Git clone (read-only from GitHub). The Deploy button, shown only for allowed elements, writes to Home Assistant after explicit confirmation.",
     card_app: "Application", card_app_meta: "runtime version",
     card_managed: "Managed elements", card_managed_meta: "mappings",
@@ -565,6 +571,7 @@ const STRINGS = {
     title: "Homelab Git Management",
     subtitle: "Contrôle Git ↔ Home Assistant",
     refresh: "Actualiser", refreshing: "Actualisation...",
+    buy_me_a_beer: "☕ M'offrir une bière",
     readonly_banner: "Le bouton Actualiser met à jour le clone Git (lecture GitHub uniquement). Le bouton Déployer, visible uniquement sur les éléments autorisés, écrit sur Home Assistant après confirmation explicite.",
     card_app: "Application", card_app_meta: "version runtime",
     card_managed: "Éléments gérés", card_managed_meta: "mappings",
