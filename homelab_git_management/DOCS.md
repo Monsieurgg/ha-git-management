@@ -116,6 +116,21 @@ size, and skipped entirely (a "cannot preview" message instead) for
 binary content. This content never leaves your own authenticated Ingress
 session — see **Exposure and authentication** below.
 
+**Normalizing "equivalent" to "identical".** A mapping in the
+**equivalent** state (same content once a UTF-8 byte-order mark, line
+endings and a trailing newline are normalized away, but not byte-for-byte
+the same — most often a leftover CRLF/LF mismatch) can be made
+byte-identical from the "⋮" menu's **Make identical** action, for any
+`ha_to_git` or `bidirectional` mapping. This takes Home Assistant's exact
+bytes and writes them into Git as a real commit, after the same explicit
+confirmation every write here requires. It reuses the exact same write
+key and commit/push/verify/rollback machinery as a normal push, with the
+line-ending guard described above deliberately not applied — swapping
+the line ending is the intended outcome of this specific action, not an
+accident it should catch. The resulting commit message says explicitly
+that it is a formatting-only change. Not offered for `git_to_ha`
+mappings, since that direction never writes to Git.
+
 ## Two-way sync (bidirectional)
 
 A mapping configured with `direction: bidirectional` combines both
@@ -174,7 +189,10 @@ written or deployed.
 
 - **identical** — byte-for-byte equal.
 - **equivalent** — equal after normalizing UTF-8 BOM and line endings
-  (still considered safe / no action needed).
+  (still considered safe / no action needed). For `ha_to_git`/
+  `bidirectional` mappings, the "⋮" menu's **Make identical** action can
+  force byte-for-byte identity — see
+  [Pushing Home Assistant changes to Git](#pushing-home-assistant-changes-to-git-ha_to_git).
 - **different** — a real content difference. Eligible for deployment if
   `direction: git_to_ha`.
 - **missing_ha** / **missing_git** / **missing_both** — the path doesn't

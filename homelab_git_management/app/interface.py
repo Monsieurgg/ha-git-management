@@ -450,12 +450,14 @@ const STRINGS = {
     error_load: "Could not load status: ", error_refresh: "Git refresh failed: ",
     error_deploy: "Deployment failed: ",
     error_push: "Push failed: ", error_acknowledge: "Could not acknowledge: ",
+    error_normalize: "Could not normalize: ",
     deploying: "Deploying...",
     confirm_deploy: 'Deploy "{target}" from GitHub to Home Assistant?\n\nA backup of the current file will be created before writing. If verification fails, an automatic rollback restores the previous content.',
     confirm_push: 'Push "{target}" from Home Assistant to GitHub?\n\nThis creates a real commit on your repository.',
     confirm_force_push: 'Force-push "{target}"? This overwrites whatever is currently on GitHub with the Home Assistant version — the GitHub-side change shown in the diff will be discarded.',
     confirm_force_deploy: 'Force-deploy "{target}"? This overwrites the current Home Assistant file with the GitHub version — the Home Assistant-side change shown in the diff will be discarded.',
     confirm_keep_git: 'Accept the current GitHub content as the new reference point for "{target}"? Nothing is pushed and Home Assistant is not touched — if it still differs afterward, a normal Push becomes available again.',
+    confirm_normalize: 'Make "{target}" byte-for-byte identical? This takes the exact Home Assistant version (including its line endings) and writes it into Git as a formatting-only commit — no content is changing, only the byte-level representation.',
     write_key_title: "Optional: write access (ha_to_git)",
     write_key_intro: "Only needed if you configure a mapping with direction: ha_to_git. This is a separate key from the one above — the read-only key never gains write access, and this key stays inactive until you add it on GitHub yourself, this time allowing write access.",
     setup_write_key_label: "Write-capable public key:",
@@ -485,7 +487,7 @@ const STRINGS = {
     setup_open_config: "Open the Configuration tab →",
     mappings_add: "+ Add a mapping",
     th_ha_path: "HA path", th_git_path: "Git path", th_manage: "Manage",
-    mapping_edit: "Edit", mapping_delete: "Delete",
+    mapping_edit: "Edit", mapping_delete: "Delete", mapping_normalize: "Make identical",
     mapping_modal_add: "Add a mapping", mapping_modal_edit: "Edit mapping",
     field_id: "Identifier", field_kind: "Type", field_direction: "Direction",
     field_ha_path: "Home Assistant path", field_git_path: "Git path",
@@ -528,12 +530,14 @@ const STRINGS = {
     error_load: "Impossible de charger l'état : ", error_refresh: "Échec de l'actualisation Git : ",
     error_deploy: "Échec du déploiement : ",
     error_push: "Échec de l'envoi : ", error_acknowledge: "Impossible d'acquitter : ",
+    error_normalize: "Impossible de rendre identique : ",
     deploying: "Déploiement...",
     confirm_deploy: 'Déployer « {target} » de GitHub vers Home Assistant ?\n\nUne sauvegarde du fichier actuel sera créée avant l\'écriture. En cas d\'échec de la vérification, un rollback automatique restaure l\'ancien contenu.',
     confirm_push: 'Envoyer « {target} » de Home Assistant vers GitHub ?\n\nCela crée un vrai commit sur votre dépôt.',
     confirm_force_push: 'Forcer l\'envoi de « {target} » ? Ceci écrase ce qui est actuellement sur GitHub par la version Home Assistant — le changement côté GitHub affiché dans le diff sera perdu.',
     confirm_force_deploy: 'Forcer le déploiement de « {target} » ? Ceci écrase le fichier Home Assistant actuel par la version GitHub — le changement côté Home Assistant affiché dans le diff sera perdu.',
     confirm_keep_git: 'Accepter le contenu GitHub actuel comme nouvelle référence pour « {target} » ? Rien n\'est envoyé et Home Assistant n\'est pas modifié — si ça diffère toujours ensuite, un envoi normal redevient possible.',
+    confirm_normalize: 'Rendre « {target} » identique octet par octet ? Ceci prend la version Home Assistant exacte (y compris ses fins de ligne) et l\'écrit dans Git comme un commit purement formel — aucun contenu ne change, seule la représentation en octets change.',
     write_key_title: "Optionnel : accès en écriture (ha_to_git)",
     write_key_intro: "Nécessaire uniquement si vous configurez un mapping avec direction: ha_to_git. C'est une clé séparée de celle ci-dessus — la clé en lecture seule n'obtient jamais d'accès écriture, et cette clé reste inactive tant que vous ne l'ajoutez pas vous-même sur GitHub, cette fois en autorisant l'écriture.",
     setup_write_key_label: "Clé publique en écriture :",
@@ -563,7 +567,7 @@ const STRINGS = {
     setup_open_config: "Ouvrir l'onglet Configuration →",
     mappings_add: "+ Ajouter un mapping",
     th_ha_path: "Chemin HA", th_git_path: "Chemin Git", th_manage: "Gérer",
-    mapping_edit: "Modifier", mapping_delete: "Supprimer",
+    mapping_edit: "Modifier", mapping_delete: "Supprimer", mapping_normalize: "Rendre identique",
     mapping_modal_add: "Ajouter un mapping", mapping_modal_edit: "Modifier le mapping",
     field_id: "Identifiant", field_kind: "Type", field_direction: "Direction",
     field_ha_path: "Chemin Home Assistant", field_git_path: "Chemin Git",
@@ -674,6 +678,14 @@ function construireMenuKebab(fichier) {
   editBtn.textContent = t("mapping_edit");
   editBtn.addEventListener("click", () => { fermerMenuKebab(); ouvrirModalMapping(fichier); });
   menu.appendChild(editBtn);
+
+  if (fichier.normalizable_now) {
+    const normalizeBtn = document.createElement("button");
+    normalizeBtn.type = "button";
+    normalizeBtn.textContent = t("mapping_normalize");
+    normalizeBtn.addEventListener("click", () => { fermerMenuKebab(); normaliserElement(fichier.id); });
+    menu.appendChild(normalizeBtn);
+  }
 
   const delBtn = document.createElement("button");
   delBtn.type = "button";
@@ -1183,6 +1195,27 @@ async function pousserElement(cible, bouton) {
     erreur.style.display = "block";
     bouton.disabled = false;
     bouton.textContent = libelle;
+  }
+}
+
+async function normaliserElement(cible) {
+  if (!window.confirm(t("confirm_normalize").replace("{target}", cible))) return;
+
+  const erreur = el("error");
+  erreur.style.display = "none";
+
+  try {
+    const reponse = await fetch(`${cheminBaseIngress()}api/normalize-git`, {
+      method: "POST", cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: cible }),
+    });
+    const donnees = await reponse.json();
+    if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
+    afficherEtat(donnees);
+  } catch (exception) {
+    erreur.textContent = t("error_normalize") + exception.message;
+    erreur.style.display = "block";
   }
 }
 
@@ -2279,6 +2312,54 @@ def declencher_acquittement_git(cible: object) -> tuple[bool, str | None]:
 
 
 ###############################################################################
+# NORMALIZE TO IDENTICAL (equivalent -> identical, Home Assistant -> Git)
+#
+# Forces byte-for-byte identity for a mapping the comparison currently
+# classifies "equivalent" (same content once formatting differences are
+# normalized away, but not byte-identical). Calls
+# gestionnaire.normaliser_git(target) directly, same pattern as every
+# other write path here: the single implementation of the rules lives in
+# gestionnaire.py.
+###############################################################################
+
+def declencher_normalisation_git(cible: object) -> tuple[bool, str | None]:
+
+    if not isinstance(cible, str) or not cible:
+        return False, "invalid target"
+
+    module, erreur_chargement = charger_gestionnaire()
+
+    if module is None:
+        return False, erreur_chargement
+
+    sortie_capturee = io.StringIO()
+
+    try:
+
+        with (
+            contextlib.redirect_stdout(sortie_capturee),
+            contextlib.redirect_stderr(sortie_capturee),
+        ):
+
+            module.normaliser_git(cible)
+
+    except SystemExit as exc:
+
+        message = sortie_capturee.getvalue().strip()
+
+        print(sortie_capturee.getvalue(), end="", flush=True)
+
+        return False, message or f"normalize refused (see add-on logs): code {exc.code}"
+
+    except Exception as exc:
+        print(sortie_capturee.getvalue(), end="", flush=True)
+        return False, f"{type(exc).__name__}: {exc}"
+
+    print(sortie_capturee.getvalue(), end="", flush=True)
+    return True, None
+
+
+###############################################################################
 # STATE FOR THE INTERFACE
 ###############################################################################
 
@@ -2341,6 +2422,12 @@ def construire_etat() -> dict:
                 and etat in {"different", "missing_git"}
             )
 
+        normalizable_now = (
+            kind != "directory"
+            and direction in {"ha_to_git", "bidirectional"}
+            and etat == "equivalent"
+        )
+
         fichiers.append(
             {
                 "id": element_id,
@@ -2351,6 +2438,7 @@ def construire_etat() -> dict:
                 "deployable_now": deployable_now,
                 "sync_status": sync_status,
                 "pushable_now": pushable_now,
+                "normalizable_now": normalizable_now,
                 "ha_path": element["ha_path"],
                 "git_path": element["git_path"],
             }
@@ -2378,7 +2466,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/1.3.0"
+    server_version = "HomelabGitManagement/1.4.0"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 
@@ -2504,6 +2592,30 @@ class InterfaceHandler(BaseHTTPRequestHandler):
             cible = charge.get("target") if isinstance(charge, dict) else None
 
             succes, message_erreur = declencher_acquittement_git(cible)
+
+            if not succes:
+                self.repondre_json(502, {"ok": False, "error": message_erreur})
+                return
+
+            donnees = construire_etat()
+            self.repondre_json(200 if donnees.get("ok") else 503, donnees)
+            return
+
+        if chemin.endswith("/api/normalize-git"):
+
+            corps_requete = self.lire_corps_borne(REQUEST_PAYLOAD_MAX_BYTES)
+
+            if corps_requete is None:
+                return
+
+            try:
+                charge = json.loads(corps_requete)
+            except json.JSONDecodeError:
+                charge = {}
+
+            cible = charge.get("target") if isinstance(charge, dict) else None
+
+            succes, message_erreur = declencher_normalisation_git(cible)
 
             if not succes:
                 self.repondre_json(502, {"ok": False, "error": message_erreur})

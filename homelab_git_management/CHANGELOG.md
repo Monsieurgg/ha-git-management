@@ -2,6 +2,26 @@
 
 All notable changes to this add-on are documented here.
 
+## 1.4.0 — normalize equivalent to identical
+
+- New kebab-menu action, "Make identical", shown for any `ha_to_git` or
+  `bidirectional` mapping currently classified **equivalent** (same
+  content once a UTF-8 byte-order mark, line endings and a trailing
+  newline are normalized away, but not byte-for-byte the same). It takes
+  Home Assistant's exact bytes and writes them into Git as a real commit,
+  after explicit confirmation — turning "equivalent" into "identical".
+- Reuses the exact same write/commit/push/verify/automatic-rollback
+  machinery as a normal `ha_to_git` push (including the second,
+  write-capable Deploy Key), with two differences: it only accepts a
+  mapping in the "equivalent" state (a real content difference still
+  goes through the normal Push button), and it deliberately skips the
+  line-ending-mismatch guard — normalizing the line ending is the whole
+  point of this action, not an accident it should catch. The resulting
+  commit message says explicitly that this is a formatting-only change,
+  not a content update.
+- Not offered for `git_to_ha` mappings: that direction never writes to
+  Git, so there is nothing for it to normalize.
+
 ## 1.3.0 — configurable per-mapping protection
 
 - Protection against Git → Home Assistant overwrites is now a per-mapping

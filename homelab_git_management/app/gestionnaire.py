@@ -1410,27 +1410,14 @@ COMMIT_AUTEUR = "Homelab Git Management"
 COMMIT_EMAIL = "noreply@homelab-git-management.local"
 
 
-def deployer_vers_git(element: dict, etat_synchro: str) -> None:
-
-    element_id = element["id"]
-
-    if element["direction"] not in {"ha_to_git", "bidirectional"}:
-        raise RuntimeError("this mapping cannot push to Git")
-
-    if element["kind"] == "directory":
-        raise RuntimeError("directory deployment is not supported")
-
-    if etat_synchro == "conflict":
-        raise RuntimeError(
-            "push blocked: both Home Assistant and Git changed since the "
-            "last sync — resolve the conflict first"
-        )
-
-    if etat_synchro == "external":
-        raise RuntimeError(
-            "push blocked: the Git side changed outside this add-on since "
-            "the last sync — acknowledge it first"
-        )
+def _preparer_ecriture_git(element: dict) -> tuple[Path, Path, bytes, bytes | None]:
+    """Path/content validation shared by deployer_vers_git() (a real
+    content push) and normaliser_vers_git() (forcing byte-identity on an
+    already-"equivalent" pair): resolves both paths, checks the write key
+    exists, rejects symlinks/wrong types, and reads both sides' current
+    bytes. Returns (chemin_ha, chemin_git, contenu_source,
+    contenu_git_actuel) — the last is None if there is nothing at
+    chemin_git yet."""
 
     if not SSH_PRIVATE_KEY_WRITE.is_file():
         raise RuntimeError(
@@ -1462,38 +1449,22 @@ def deployer_vers_git(element: dict, etat_synchro: str) -> None:
     parent_git.mkdir(parents=True, exist_ok=True)
 
     contenu_source = chemin_ha.read_bytes()
+    contenu_git_actuel = chemin_git.read_bytes() if chemin_git.exists() else None
 
-    if chemin_git.exists():
+    return chemin_ha, chemin_git, contenu_source, contenu_git_actuel
 
-        contenu_git_actuel = chemin_git.read_bytes()
 
-        if est_fichier_texte(chemin_ha, contenu_source) and est_fichier_texte(chemin_git, contenu_git_actuel):
-
-            convention_existante = convention_fin_de_ligne(contenu_git_actuel)
-            convention_nouvelle = convention_fin_de_ligne(contenu_source)
-
-            if (
-                convention_existante in {"lf", "crlf"}
-                and convention_nouvelle in {"lf", "crlf"}
-                and convention_existante != convention_nouvelle
-            ):
-                raise RuntimeError(
-                    "line-ending mismatch: this file is tracked in Git with "
-                    f"{convention_existante.upper()} line endings, but the "
-                    f"current Home Assistant version uses "
-                    f"{convention_nouvelle.upper()} — pushing as-is would "
-                    "silently convert every line and bury the real change "
-                    "in a massive diff. This usually means the source file "
-                    "was edited or transferred through something that "
-                    "changes line endings (a Windows text editor, an SFTP "
-                    "client in text mode, a Samba mount, ...) rather than "
-                    "an intentional format change — fix the line endings "
-                    "at the source before pushing again"
-                )
-
-    mode_destination = (
-        stat.S_IMODE(chemin_git.stat().st_mode) if chemin_git.exists() else 0o644
-    )
+def _ecrire_commit_pousser_git(
+    element_id: str,
+    chemin_git: Path,
+    contenu_source: bytes,
+    mode_destination: int,
+    message_commit: str,
+) -> None:
+    """Atomic write + commit + push + verify + automatic rollback on a
+    failed push, factored out of deployer_vers_git() so
+    normaliser_vers_git() can reuse the exact same machinery with its own
+    commit message, instead of duplicating this risk-bearing logic."""
 
     nettoyer_verrou_residuel()
 
@@ -1524,7 +1495,7 @@ def deployer_vers_git(element: dict, etat_synchro: str) -> None:
         "-c", f"user.name={COMMIT_AUTEUR}",
         "-c", f"user.email={COMMIT_EMAIL}",
         "commit",
-        "-m", f"Update {chemin_git_relatif} from Home Assistant",
+        "-m", message_commit,
     )
 
     if resultat_commit.returncode != 0:
@@ -1573,6 +1544,112 @@ def deployer_vers_git(element: dict, etat_synchro: str) -> None:
 
     log(f"[PUSH] {element_id}: atomic write + commit + push: OK ({tete_apres[:12]})")
     log(f"[PUSH] {element_id}: SUCCESS")
+
+
+def deployer_vers_git(element: dict, etat_synchro: str) -> None:
+
+    element_id = element["id"]
+
+    if element["direction"] not in {"ha_to_git", "bidirectional"}:
+        raise RuntimeError("this mapping cannot push to Git")
+
+    if element["kind"] == "directory":
+        raise RuntimeError("directory deployment is not supported")
+
+    if etat_synchro == "conflict":
+        raise RuntimeError(
+            "push blocked: both Home Assistant and Git changed since the "
+            "last sync — resolve the conflict first"
+        )
+
+    if etat_synchro == "external":
+        raise RuntimeError(
+            "push blocked: the Git side changed outside this add-on since "
+            "the last sync — acknowledge it first"
+        )
+
+    chemin_ha, chemin_git, contenu_source, contenu_git_actuel = _preparer_ecriture_git(element)
+
+    if contenu_git_actuel is not None:
+
+        if est_fichier_texte(chemin_ha, contenu_source) and est_fichier_texte(chemin_git, contenu_git_actuel):
+
+            convention_existante = convention_fin_de_ligne(contenu_git_actuel)
+            convention_nouvelle = convention_fin_de_ligne(contenu_source)
+
+            if (
+                convention_existante in {"lf", "crlf"}
+                and convention_nouvelle in {"lf", "crlf"}
+                and convention_existante != convention_nouvelle
+            ):
+                raise RuntimeError(
+                    "line-ending mismatch: this file is tracked in Git with "
+                    f"{convention_existante.upper()} line endings, but the "
+                    f"current Home Assistant version uses "
+                    f"{convention_nouvelle.upper()} — pushing as-is would "
+                    "silently convert every line and bury the real change "
+                    "in a massive diff. This usually means the source file "
+                    "was edited or transferred through something that "
+                    "changes line endings (a Windows text editor, an SFTP "
+                    "client in text mode, a Samba mount, ...) rather than "
+                    "an intentional format change — fix the line endings "
+                    "at the source before pushing again"
+                )
+
+    mode_destination = (
+        stat.S_IMODE(chemin_git.stat().st_mode) if chemin_git.exists() else 0o644
+    )
+
+    chemin_git_relatif = chemin_git.relative_to(GIT_ROOT).as_posix()
+
+    _ecrire_commit_pousser_git(
+        element_id, chemin_git, contenu_source, mode_destination,
+        f"Update {chemin_git_relatif} from Home Assistant",
+    )
+
+
+def normaliser_vers_git(element: dict, etat: str) -> None:
+    """Forces byte-for-byte identity for a mapping currently classified
+    "equivalent" (same content once a UTF-8 BOM, line endings and a
+    trailing newline are normalized away, but not byte-identical): takes
+    Home Assistant's exact bytes and writes them into Git. Deliberately
+    skips the line-ending-mismatch guard in deployer_vers_git() — swapping
+    the line-ending convention is the entire point of this action here,
+    not an accident to catch."""
+
+    element_id = element["id"]
+
+    if element["direction"] not in {"ha_to_git", "bidirectional"}:
+        raise RuntimeError("this mapping cannot push to Git")
+
+    if element["kind"] == "directory":
+        raise RuntimeError("directory deployment is not supported")
+
+    if etat != "equivalent":
+        raise RuntimeError(
+            "normalize-to-identical only applies when Home Assistant and "
+            "Git already agree except for formatting (byte-order mark, "
+            "line endings, trailing newline)"
+        )
+
+    chemin_ha, chemin_git, contenu_source, contenu_git_actuel = _preparer_ecriture_git(element)
+
+    if contenu_git_actuel is None:
+        raise RuntimeError("Git target missing — nothing to normalize")
+
+    if contenu_source == contenu_git_actuel:
+        raise RuntimeError(
+            "nothing to normalize (Git already matches Home Assistant byte-for-byte)"
+        )
+
+    mode_destination = stat.S_IMODE(chemin_git.stat().st_mode)
+    chemin_git_relatif = chemin_git.relative_to(GIT_ROOT).as_posix()
+
+    _ecrire_commit_pousser_git(
+        element_id, chemin_git, contenu_source, mode_destination,
+        f"Normalize {chemin_git_relatif} to match Home Assistant byte-for-byte "
+        "(formatting only, no content change)",
+    )
 
 
 ###############################################################################
@@ -1750,6 +1827,28 @@ def acquitter_git(target: str) -> None:
     log(f"[COMMAND] {target}: Git state acknowledged as the new reference point")
 
 
+def normaliser_git(target: str) -> None:
+    """Entry point for the "make identical" kebab-menu action: forces
+    Home Assistant's exact bytes into Git for a mapping the comparison
+    currently classifies as "equivalent" (same content once formatting
+    differences are normalized away, but not byte-identical)."""
+
+    elements_par_id = {element["id"]: element for element in elements}
+
+    if target not in elements_par_id:
+        erreur(f"unmanaged element: {target}")
+
+    element = elements_par_id[target]
+    etat = resultats_comparaison.get(target)
+
+    log(f"[COMMAND] normalize-to-identical requested: {target}")
+
+    try:
+        normaliser_vers_git(element, etat)
+    except Exception as exc:
+        erreur(f"{target}: {exc}")
+
+
 def traiter_commande_stdin() -> None:
 
     if len(sys.argv) == 1:
@@ -1778,7 +1877,7 @@ def traiter_commande_stdin() -> None:
     forcer = commande.get("force", False)
     sens = commande.get("sens")
 
-    if action not in {"deploy", "acknowledge_git"}:
+    if action not in {"deploy", "acknowledge_git", "normalize_git"}:
         erreur(f"stdin command: unauthorized action: {action}")
 
     if (
@@ -1801,6 +1900,10 @@ def traiter_commande_stdin() -> None:
 
     if confirmation is not True:
         erreur(f"{target}: missing explicit confirmation; confirm:true is required")
+
+    if action == "normalize_git":
+        normaliser_git(target)
+        return
 
     deployer_element(target, confirmation, forcer, sens)
 
