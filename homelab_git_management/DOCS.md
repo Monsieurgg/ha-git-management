@@ -322,6 +322,24 @@ re-reads it to verify it matches byte-for-byte, and re-classifies it to
 confirm `identical`. If any of that fails, the original content (or
 absence) is restored automatically before the add-on reports failure.
 
+**YAML syntax check.** Before any of the above ever starts — for a
+`.yaml`/`.yml` file, in either direction (`git_to_ha` deploy or
+`ha_to_git`/`bidirectional` push) — the add-on does a quick, best-effort
+check that the content it is about to write is at least syntactically
+valid YAML, using the same library (`py3-yaml`) Home Assistant Core
+itself uses to parse these files. Home Assistant's own custom tags
+(`!include`, `!secret`, `!env_var`, ...) are explicitly accepted, since
+this check only cares about syntax, never about resolving what a tag
+would actually load. A genuinely broken file (an unclosed quote, a bad
+flow sequence, ...) is rejected immediately, with no backup created and
+nothing written on either side. This is a syntax check only — it is
+complementary to, not a replacement for, the semantic
+[config validation and automatic rollback](#config-validation-and-automatic-rollback)
+above: that one asks Home Assistant Core itself whether a configuration
+makes sense, but only ever runs for a write into Home Assistant; this
+one is instant, needs no network access, and also covers the
+`ha_to_git` direction the Core check never sees.
+
 ## Updating the add-on itself
 
 This add-on never modifies its own source. Updates go through the normal

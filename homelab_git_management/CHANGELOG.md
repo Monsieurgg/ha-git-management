@@ -44,6 +44,24 @@ All notable changes to this add-on are documented here.
   next to the language and Refresh buttons — previously only on the
   GitHub repository page, which most people using the add-on day to day
   never see.
+- New: a best-effort **YAML syntax check** now runs right before any
+  write into Git *or* Home Assistant (a `git_to_ha` deploy, a
+  `ha_to_git`/`bidirectional` push, or the "Make identical" and restore
+  actions that write through the same paths), for any `.yaml`/`.yml`
+  file. It catches an obviously broken file — an unclosed quote, a bad
+  flow-sequence, ... — immediately and clearly, before either side ever
+  sees it, and before any backup or write happens. Home Assistant's own
+  custom tags (`!include`, `!secret`, `!env_var`, and any other `!...`
+  tag) are explicitly tolerated, since this only checks syntax, never
+  tries to resolve what a tag would load to. This is a syntax check
+  only — it says nothing about whether the configuration actually makes
+  sense (that's what the config-check + auto-rollback above already
+  covers, for the Home Assistant side specifically); the two are
+  complementary, and this one additionally covers the `ha_to_git`
+  direction that the Core check never sees, needs no network access,
+  and runs instantly. Adds `py3-yaml` to the image (Alpine's standard
+  YAML library, no network access at runtime, the same library Home
+  Assistant Core itself uses to parse these exact files).
 
 ## 2.1.0 — diff preview, backup restore, opt-in line-ending fix
 

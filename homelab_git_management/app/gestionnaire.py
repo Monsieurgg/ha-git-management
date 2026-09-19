@@ -53,6 +53,8 @@ import stat
 import subprocess
 import sys
 
+import yaml
+
 
 ###############################################################################
 # CONSTANTS
@@ -717,6 +719,47 @@ def convertir_fin_de_ligne(contenu: bytes, convention_cible: str) -> bytes:
         return normalise.replace(b"\n", b"\r\n")
 
     return normalise
+
+
+class _ChargeurYamlTolerant(yaml.SafeLoader):
+    """A SafeLoader that accepts — without trying to resolve — any custom
+    YAML tag (`!include`, `!secret`, `!env_var`, or anything else Home
+    Assistant or a user's own setup might use), since this loader only
+    ever checks *syntax*, never what a tag would actually load to."""
+
+
+_ChargeurYamlTolerant.add_multi_constructor(
+    "!", lambda loader, tag_suffix, node: None
+)
+
+
+def verifier_syntaxe_yaml(chemin: Path, contenu: bytes) -> None:
+    """Best-effort YAML syntax check, applied to both write directions
+    (deployer_fichier() for git_to_ha, _preparer_ecriture_git() for
+    ha_to_git/bidirectional's push side): catches an obviously broken
+    file — bad indentation, an unclosed quote, a duplicate key, ... —
+    immediately and clearly, before it is ever written into Git or Home
+    Assistant. Only applies to `.yaml`/`.yml` files; anything else is
+    left alone.
+
+    This is a syntax check only. It says nothing about whether the
+    resulting configuration actually makes sense to Home Assistant —
+    that is what Core's own config-check API covers (see
+    verifier_config_ha() in interface.py), for writes into Home
+    Assistant specifically. The two are complementary, not redundant:
+    this one is instant, needs no network access, and also covers the
+    ha_to_git direction that the Core check never sees."""
+
+    if chemin.suffix.lower() not in {".yaml", ".yml"}:
+        return
+
+    if not est_fichier_texte(chemin, contenu):
+        return
+
+    try:
+        yaml.load(contenu, Loader=_ChargeurYamlTolerant)
+    except yaml.YAMLError as exc:
+        raise RuntimeError(f"invalid YAML syntax in {chemin.name}: {exc}") from exc
 
 
 def classer_fichier(chemin_ha: Path, chemin_git: Path) -> str:
@@ -1451,6 +1494,8 @@ def deployer_fichier(element: dict, etat: str) -> None:
 
     contenu_source = chemin_git.read_bytes()
 
+    verifier_syntaxe_yaml(chemin_ha, contenu_source)
+
     cible_existait = chemin_ha.exists()
 
     sauvegarde = None
@@ -1587,6 +1632,8 @@ def _preparer_ecriture_git(element: dict) -> tuple[Path, Path, bytes, bytes | No
 
     contenu_source = chemin_ha.read_bytes()
     contenu_git_actuel = chemin_git.read_bytes() if chemin_git.exists() else None
+
+    verifier_syntaxe_yaml(chemin_ha, contenu_source)
 
     return chemin_ha, chemin_git, contenu_source, contenu_git_actuel
 

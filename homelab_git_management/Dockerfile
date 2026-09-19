@@ -35,10 +35,14 @@ LABEL \
     io.hass.type="app" \
     io.hass.arch="${BUILD_ARCH}"
 
-# py3-yaml is not needed: options come from /data/options.json (JSON,
-# stdlib json module only) rather than a bundled YAML manifest.
+# py3-yaml: used only for a best-effort YAML *syntax* check right before
+# any write into Git or Home Assistant (gestionnaire.verifier_syntaxe_yaml),
+# catching an obviously broken file before it ever reaches either side.
+# This add-on's own options still come from /data/options.json (JSON,
+# stdlib json module only) — this is unrelated to that.
 RUN apk add --no-cache \
     python3 \
+    py3-yaml \
     git \
     openssh-client-default \
     openssh-keygen
