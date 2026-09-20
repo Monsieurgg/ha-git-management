@@ -422,6 +422,13 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
           <span data-i18n="field_normalize_line_endings">Auto-fix line endings on Push instead of blocking</span>
         </label>
       </div>
+
+      <div class="field-row">
+        <label>
+          <input id="mapping-create-if-missing" type="checkbox">
+          <span data-i18n="field_create_if_missing">Create the file/directory now on any side where it doesn't exist yet</span>
+        </label>
+      </div>
     </div>
     <div class="modal-footer">
       <button id="mapping-cancel" type="button" data-i18n="cancel">Cancel</button>
@@ -585,6 +592,7 @@ const STRINGS = {
     field_protect: "🔒 Protect this file — never let Deploy/Git overwrite it",
     mapping_protect_warning: "⚠️ This is one of Home Assistant's own core config files. Leaving it unprotected is strongly discouraged: a failed deployment here could break your whole Home Assistant instance.",
     field_normalize_line_endings: "🔧 Auto-fix line endings on Push instead of blocking",
+    field_create_if_missing: "📄 Create the file/directory now on any side where it doesn't exist yet",
     confirm_unprotect_core: "You are about to save \"{target}\" WITHOUT protection, on a core Home Assistant config file. This is strongly discouraged — a bad deployment could break your Home Assistant instance. Continue anyway?",
     kind_file: "File", kind_directory: "Directory (comparison only)",
     dir_git_to_ha: "Git -> Home Assistant",
@@ -687,6 +695,7 @@ const STRINGS = {
     field_protect: "🔒 Protéger ce fichier — ne jamais laisser Déployer/Git l'écraser",
     mapping_protect_warning: "⚠️ Ceci est l'un des fichiers de configuration essentiels de Home Assistant. Le laisser sans protection est fortement déconseillé : un déploiement raté ici pourrait casser toute votre instance Home Assistant.",
     field_normalize_line_endings: "🔧 Corriger auto. les fins de ligne au Push au lieu de bloquer",
+    field_create_if_missing: "📄 Créer le fichier/dossier maintenant du côté où il n'existe pas encore",
     confirm_unprotect_core: "Vous êtes sur le point d'enregistrer « {target} » SANS protection, sur un fichier de configuration essentiel de Home Assistant. C'est fortement déconseillé — un mauvais déploiement pourrait casser votre instance Home Assistant. Continuer quand même ?",
     kind_file: "Fichier", kind_directory: "Dossier (comparaison uniquement)",
     dir_git_to_ha: "Git -> Home Assistant",
@@ -1019,6 +1028,9 @@ function ouvrirModalMapping(mapping) {
   el("mapping-git-path").value = mapping ? mapping.git_path : "";
   el("mapping-protect").checked = mapping ? !!mapping.protected : false;
   el("mapping-normalize-line-endings").checked = mapping ? !!mapping.normalize_line_endings : false;
+  // A one-time action, never a stored mapping property — always starts
+  // unchecked, whether adding a new mapping or editing an existing one.
+  el("mapping-create-if-missing").checked = false;
 
   mettreAJourAvertissementProtection();
   mettreAJourVisibiliteNormalisation();
@@ -1079,6 +1091,7 @@ async function sauvegarderMapping() {
 
   const protectFromGit = el("mapping-protect").checked;
   const normalizeLineEndings = el("mapping-normalize-line-endings").checked;
+  const createIfMissing = el("mapping-create-if-missing").checked;
   const directionConcernee = direction === "git_to_ha" || direction === "bidirectional";
 
   if (directionConcernee && estCheminEssentiel(haPath) && !protectFromGit) {
@@ -1089,6 +1102,12 @@ async function sauvegarderMapping() {
     id, kind, direction, ha_path: haPath, git_path: gitPath,
     protect_from_git: protectFromGit, normalize_line_endings: normalizeLineEndings,
   };
+
+  // A one-time instruction for this save only — never persisted as a
+  // mapping property, see gerer_sauvegarde_mappings() server-side.
+  if (createIfMissing) {
+    nouveauMapping.create_if_missing = true;
+  }
   const listeExistante = copierMappingsPourEnvoi();
 
   const nouvelleListe = mappingEnEdition
@@ -2808,7 +2827,10 @@ def construire_classeur_export() -> bytes:
     feuille = classeur.active
     feuille.title = "Mappings"
 
-    feuille.append(["id", "kind", "direction", "ha_file", "git_file", "protect_from_git", "normalize_line_endings"])
+    feuille.append([
+        "id", "kind", "direction", "ha_file", "git_file",
+        "protect_from_git", "normalize_line_endings", "create_if_missing",
+    ])
 
     for element in elements:
         feuille.append([
@@ -2816,6 +2838,7 @@ def construire_classeur_export() -> bytes:
             element["ha_path"], element["git_path"],
             "true" if element.get("protected") else "false",
             "true" if element.get("normalize_line_endings") else "false",
+            "false",
         ])
 
     premiere_ligne_vide = len(elements) + 2
@@ -2847,6 +2870,7 @@ def construire_classeur_export() -> bytes:
         (5, plage("B", len(noms_git))),
         (6, '"true,false"'),
         (7, '"true,false"'),
+        (8, '"true,false"'),
     ]
 
     for colonne_index, formule in validations:
@@ -2855,7 +2879,7 @@ def construire_classeur_export() -> bytes:
         validation.add(f"{colonne_lettre}2:{colonne_lettre}{derniere_ligne}")
         feuille.add_data_validation(validation)
 
-    for colonne_index, largeur in zip(range(1, 8), [18, 10, 14, 42, 42, 16, 20]):
+    for colonne_index, largeur in zip(range(1, 9), [18, 10, 14, 42, 42, 16, 20, 18]):
         feuille.column_dimensions[get_column_letter(colonne_index)].width = largeur
 
     tampon = io.BytesIO()
@@ -2904,8 +2928,11 @@ def gerer_import_excel_preview(handler: "InterfaceHandler") -> None:
         if ligne is None or all(valeur is None or str(valeur).strip() == "" for valeur in ligne):
             continue  # a blank template row
 
-        valeurs = list(ligne) + [None] * max(0, 7 - len(ligne))
-        id_brut, kind_brut, direction_brut, ha_file_brut, git_file_brut, protect_brut, normalize_brut = valeurs[:7]
+        valeurs = list(ligne) + [None] * max(0, 8 - len(ligne))
+        (
+            id_brut, kind_brut, direction_brut, ha_file_brut, git_file_brut,
+            protect_brut, normalize_brut, creer_brut,
+        ) = valeurs[:8]
 
         id_element = str(id_brut if id_brut is not None else "").strip()
         kind = str(kind_brut if kind_brut is not None else "").strip() or "file"
@@ -2927,7 +2954,7 @@ def gerer_import_excel_preview(handler: "InterfaceHandler") -> None:
         if erreur_ha or erreur_git:
             continue
 
-        resolus.append({
+        mapping_resolu = {
             "id": id_element,
             "kind": kind,
             "direction": str(direction_brut if direction_brut is not None else "").strip(),
@@ -2935,7 +2962,19 @@ def gerer_import_excel_preview(handler: "InterfaceHandler") -> None:
             "git_path": git_path,
             "protect_from_git": valeur_booleenne(protect_brut),
             "normalize_line_endings": valeur_booleenne(normalize_brut),
-        })
+        }
+
+        # A one-time instruction for the save that follows this preview,
+        # never a stored mapping property — see
+        # gerer_sauvegarde_mappings(). A bare name that resolved to
+        # nothing would already have failed above as "not found"; a
+        # literal path (typed instead of picked from the dropdown) is
+        # exactly how a not-yet-existing target is named here, and
+        # needs no special casing for that reason.
+        if valeur_booleenne(creer_brut):
+            mapping_resolu["create_if_missing"] = True
+
+        resolus.append(mapping_resolu)
 
     if erreurs:
         handler.repondre_json(400, {"ok": False, "error": "\n".join(erreurs)})
@@ -2972,6 +3011,27 @@ def gerer_sauvegarde_mappings(handler: "InterfaceHandler") -> None:
     except ValueError as exc:
         handler.repondre_json(400, {"ok": False, "error": str(exc)})
         return
+
+    # "create_if_missing" is a one-time instruction for this save only
+    # (the mapping form's checkbox, or a bulk Excel import column) —
+    # valider_mappings_proposes() already dropped it from
+    # mappings_valides since it builds its own dict of known fields, so
+    # it must be read from the raw, pre-validation payload instead.
+    ids_a_creer = {
+        entree.get("id") for entree in charge["mappings"]
+        if isinstance(entree, dict) and entree.get("create_if_missing")
+    }
+
+    for mapping in mappings_valides:
+
+        if mapping["id"] not in ids_a_creer:
+            continue
+
+        try:
+            module.creer_elements_manquants(mapping)
+        except RuntimeError as exc:
+            handler.repondre_json(502, {"ok": False, "error": f"{mapping['id']}: {exc}"})
+            return
 
     succes, erreur_ecriture = ecrire_options_supervisor({"mappings": mappings_valides})
 

@@ -31,6 +31,16 @@ All notable changes to this add-on are documented here.
   and read the workbook — unrelated to how this add-on's own
   configuration is stored (`/data/options.json` stays plain JSON, via
   the standard library) or to anything the engine itself does.
+- New: a "Create the file/directory now on any side where it doesn't
+  exist yet" checkbox, in the mapping form and as a `create_if_missing`
+  column in the Excel import. Until now, a mapping pointing at a file
+  that doesn't exist on either side yet had no way to actually get
+  started — this creates an empty file (or directory, with the small
+  `.gitkeep` placeholder Git needs to track an otherwise-empty folder)
+  on whichever side is missing, right when the mapping is saved. A side
+  that already exists is always left untouched; creating on the Git
+  side is a real commit + push. Works for a single mapping from the
+  form, or for many at once from an Excel import.
 
 ## 2.2.0 — config check + auto-rollback, Home Assistant notifications
 

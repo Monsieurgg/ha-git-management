@@ -1746,6 +1746,63 @@ def _ecrire_commit_pousser_git(
     log(f"[PUSH] {element_id}: SUCCESS")
 
 
+def creer_elements_manquants(mapping: dict) -> None:
+    """For one already-validated mapping, creates an empty file or
+    directory on whichever side (Home Assistant, Git, or both) is
+    currently missing — a side that already exists is always left
+    untouched. Backs the dashboard's "create if missing" checkbox (the
+    mapping form and the bulk Excel import both funnel through this):
+    a one-time action requested at save time, never itself stored as a
+    mapping property in options.json. A Git-side creation is a real
+    commit + push, using the exact same atomic-write-then-push
+    machinery as a normal ha_to_git push. Raises RuntimeError on
+    failure; the caller decides what that means for the save as a
+    whole (see interface.py's gerer_sauvegarde_mappings)."""
+
+    kind = mapping["kind"]
+    chemin_ha = convertir_chemin_ha(mapping["ha_path"])
+    chemin_git = convertir_chemin_git(mapping["git_path"])
+
+    if not chemin_ha.exists():
+
+        try:
+            if kind == "directory":
+                chemin_ha.mkdir(parents=True, exist_ok=True)
+            else:
+                chemin_ha.parent.mkdir(parents=True, exist_ok=True)
+                ecrire_atomiquement(chemin_ha, b"", 0o644)
+        except OSError as exc:
+            raise RuntimeError(
+                f"could not create {mapping['ha_path']} on Home Assistant: {exc}"
+            ) from exc
+
+        log(f"[CREATE] {mapping['id']}: created {mapping['ha_path']} on Home Assistant (empty)")
+
+    if not chemin_git.exists():
+
+        try:
+            if kind == "directory":
+                # Git has no notion of an empty directory: a placeholder
+                # file is the only way to make one appear in a commit.
+                chemin_git.mkdir(parents=True, exist_ok=True)
+                _ecrire_commit_pousser_git(
+                    mapping["id"], chemin_git / ".gitkeep", b"", 0o644,
+                    f"Create {mapping['git_path']} (empty directory)",
+                )
+            else:
+                chemin_git.parent.mkdir(parents=True, exist_ok=True)
+                _ecrire_commit_pousser_git(
+                    mapping["id"], chemin_git, b"", 0o644,
+                    f"Create {mapping['git_path']} (empty)",
+                )
+        except OSError as exc:
+            raise RuntimeError(
+                f"could not create {mapping['git_path']} in Git: {exc}"
+            ) from exc
+
+        log(f"[CREATE] {mapping['id']}: created {mapping['git_path']} in Git (empty)")
+
+
 def deployer_vers_git(element: dict, etat_synchro: str) -> None:
 
     element_id = element["id"]

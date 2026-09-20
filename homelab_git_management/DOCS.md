@@ -105,6 +105,20 @@ clear error instead of silently corrupting the list. This is meant for
 setting up many mappings at once, rather than repeating the
 Add-a-mapping form one path at a time.
 
+**Creating a file that doesn't exist yet.** A mapping normally points at
+something that already exists on at least one side. To start managing a
+file (or directory) that exists on *neither* side yet, check "Create the
+file/directory now on any side where it doesn't exist yet" in the
+mapping form — or set `create_if_missing` to `true` on a row in the
+Excel import — and save. An empty file (or, for a directory mapping, an
+empty folder with the small `.gitkeep` placeholder Git needs to track an
+otherwise-empty directory) is created on whichever side is currently
+missing, right at save time; a side that already has something is
+always left untouched. Creating on the Git side is a real commit and
+push, using the same write path as a normal `ha_to_git` push. This is a
+one-time instruction for that save only — it is never itself stored as
+part of the mapping.
+
 ## Pushing Home Assistant changes to Git (ha_to_git)
 
 A mapping configured with `direction: ha_to_git` does the reverse of the
