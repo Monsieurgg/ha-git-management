@@ -2,22 +2,35 @@
 
 All notable changes to this add-on are documented here.
 
-## 2.3.0 — bulk mappings export/import
+## 2.3.0 — bulk mappings export/import (Excel)
 
-- New: "Export mappings" and "Import mappings" buttons next to
-  "+ Add a mapping". Export downloads the current mappings list as a
-  JSON file; Import reads a JSON file back (the same format, or a plain
-  array of mappings) and merges it into the current list — updating any
-  mapping whose `id` already exists, adding any new one — instead of
-  replacing the list outright. A summary ("N new, M updated") is shown
-  for confirmation before anything is saved. Meant for setting up many
-  mappings at once instead of one by one through the form, or for
-  reusing the same structure across installs.
-- No backend changes: import reuses the existing `/api/mappings`
-  endpoint and its existing validation, so an imported mapping is held
-  to exactly the same rules as one entered by hand — a bad entry blocks
-  the whole import with the same clear error message the manual form
-  already gives.
+- New: "Export mappings (Excel)" and "Import mappings (Excel)" buttons
+  next to "+ Add a mapping". Export downloads the current mappings list
+  as an `.xlsx` workbook, one row per mapping, with the HA/Git file (or
+  directory) columns offered as native Excel dropdown lists — built by
+  scanning the actual Home Assistant config and Git repository trees at
+  export time, no macro involved. Import reads a workbook back and
+  merges it into the current list (update by `id`, add if new), with a
+  short summary shown for confirmation before anything is saved. Meant
+  for setting up many mappings at once instead of one by one through
+  the form.
+- The HA/Git dropdowns offer a bare file/directory *name*, not a full
+  path — pick "configuration.yaml" rather than typing
+  "/config/configuration.yaml". On import, a name is resolved against
+  the current tree: if it matches exactly one file or directory, the
+  full path is filled in automatically; if it matches none or more than
+  one (two files sharing a name in different folders, say), the whole
+  import is rejected up front with a clear message naming every
+  offending row — nothing is saved on a partial/ambiguous import. A
+  cell can also hold a literal path directly (anything containing a
+  `/`) instead of a bare name — used as-is, no lookup — which is both
+  the escape hatch for a genuinely ambiguous name and how an existing,
+  unchanged mapping's own row survives a re-import unaffected by
+  whatever else exists elsewhere in either tree.
+- New dependency: `py3-openpyxl`, used only by this feature to build
+  and read the workbook — unrelated to how this add-on's own
+  configuration is stored (`/data/options.json` stays plain JSON, via
+  the standard library) or to anything the engine itself does.
 
 ## 2.2.0 — config check + auto-rollback, Home Assistant notifications
 

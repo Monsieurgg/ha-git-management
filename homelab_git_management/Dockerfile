@@ -40,9 +40,14 @@ LABEL \
 # catching an obviously broken file before it ever reaches either side.
 # This add-on's own options still come from /data/options.json (JSON,
 # stdlib json module only) — this is unrelated to that.
+#
+# py3-openpyxl: used only to generate/read the bulk mappings Excel
+# workbook (interface.py's export/import). Unrelated to the two points
+# above; the engine (gestionnaire.py) has no notion of Excel at all.
 RUN apk add --no-cache \
     python3 \
     py3-yaml \
+    py3-openpyxl \
     git \
     openssh-client-default \
     openssh-keygen

@@ -44,6 +44,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+# Used only to generate/read the bulk mappings Excel workbook (export and
+# import). No other part of this add-on depends on it: /data/options.json
+# itself is still plain JSON via the standard library, and the engine
+# (gestionnaire.py) has no notion of Excel at all.
+import openpyxl
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.datavalidation import DataValidation
+
 
 ###############################################################################
 # CONSTANTS
@@ -66,6 +74,21 @@ SSH_PUBLIC_KEY_WRITE = Path("/data/ssh/github_deploy_key_write.pub")
 # state by seeing what actually differs. Never used for any other
 # mapping or state. See gerer_diff() and DOCS.md.
 DIFF_MAX_BYTES = 262144  # 256 KiB per side
+
+# Bulk mappings export/import (Excel). A workbook this size is already far
+# beyond anything a real mappings list would ever need — this only guards
+# against an unrelated, mistakenly-uploaded file.
+EXCEL_UPLOAD_MAX_BYTES = 5 * 1024 * 1024  # 5 MiB
+
+# How many distinct file/directory names are offered in the export's
+# dropdown lists, per side (HA, Git). A cap on the *dropdown convenience*
+# only — resolving a name typed or picked from an import always searches
+# the full tree, uncapped, regardless of this limit.
+EXCEL_DROPDOWN_MAX_ENTRIES = 2000
+
+# Extra blank, dropdown-ready rows appended after the current mappings in
+# an export, ready to fill in for a bulk add.
+EXCEL_TEMPLATE_BLANK_ROWS = 30
 
 SUPERVISOR_API = "http://supervisor"
 
@@ -322,9 +345,9 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
         <div class="panel-header-actions">
           <div id="status-line" class="status-line" data-i18n="loading">Loading…</div>
           <button id="add-mapping" type="button" data-i18n="mappings_add">+ Add a mapping</button>
-          <button id="export-mappings" type="button" data-i18n="mappings_export">Export mappings</button>
-          <button id="import-mappings" type="button" data-i18n="mappings_import">Import mappings</button>
-          <input id="import-mappings-input" type="file" accept="application/json,.json" hidden>
+          <button id="export-mappings" type="button" data-i18n="mappings_export">Export mappings (Excel)</button>
+          <button id="import-mappings" type="button" data-i18n="mappings_import">Import mappings (Excel)</button>
+          <input id="import-mappings-input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
         </div>
       </div>
       <div class="table-wrapper">
@@ -544,10 +567,11 @@ const STRINGS = {
     copy_key: "Copy", copied_key: "Copied!",
     setup_open_config: "Open the Configuration tab →",
     mappings_add: "+ Add a mapping",
-    mappings_export: "Export mappings", mappings_import: "Import mappings",
-    mappings_import_error_parse: "This file is not valid JSON.",
-    mappings_import_error_shape: 'Expected a JSON file with a "mappings" array (or a plain array), as produced by "Export mappings".',
-    mappings_import_error_invalid: "Every mapping in the file must have an id.",
+    mappings_export: "Export mappings (Excel)", mappings_import: "Import mappings (Excel)",
+    mappings_export_error: "Could not generate the Excel file: ",
+    mappings_import_error_parse: "This file is not a valid Excel (.xlsx) workbook.",
+    mappings_import_error_resolve: "Cannot import this file:\n",
+    mappings_import_error_empty: "This file has no mapping rows to import.",
     mappings_import_confirm: "Import this file? {added} new mapping(s), {updated} updated — {total} total after import. Nothing is saved until you confirm.",
     mappings_import_error_save: "Import failed: ",
     th_ha_path: "HA path", th_git_path: "Git path", th_direction: "Direction", th_manage: "Manage",
@@ -645,10 +669,11 @@ const STRINGS = {
     setup_none: "non défini",
     setup_open_config: "Ouvrir l'onglet Configuration →",
     mappings_add: "+ Ajouter un mapping",
-    mappings_export: "Exporter les mappings", mappings_import: "Importer des mappings",
-    mappings_import_error_parse: "Ce fichier n'est pas un JSON valide.",
-    mappings_import_error_shape: 'Un fichier JSON avec un tableau "mappings" (ou un simple tableau) est attendu, comme celui produit par "Exporter les mappings".',
-    mappings_import_error_invalid: "Chaque mapping du fichier doit avoir un id.",
+    mappings_export: "Exporter les mappings (Excel)", mappings_import: "Importer des mappings (Excel)",
+    mappings_export_error: "Impossible de générer le fichier Excel : ",
+    mappings_import_error_parse: "Ce fichier n'est pas un classeur Excel (.xlsx) valide.",
+    mappings_import_error_resolve: "Import impossible :\n",
+    mappings_import_error_empty: "Ce fichier ne contient aucune ligne de mapping à importer.",
     mappings_import_confirm: "Importer ce fichier ? {added} nouveau(x) mapping(s), {updated} mis à jour — {total} au total après import. Rien n'est enregistré tant que vous ne confirmez pas.",
     mappings_import_error_save: "Échec de l'import : ",
     th_ha_path: "Chemin HA", th_git_path: "Chemin Git", th_direction: "Direction", th_manage: "Gérer",
@@ -1157,18 +1182,27 @@ async function supprimerMapping(id) {
   }
 }
 
-function exporterMappings() {
-  const payload = { mappings: copierMappingsPourEnvoi() };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
+async function exporterMappings() {
+  const erreur = el("error");
+  erreur.style.display = "none";
 
-  const lien = document.createElement("a");
-  lien.href = url;
-  lien.download = "mappings.json";
-  document.body.appendChild(lien);
-  lien.click();
-  document.body.removeChild(lien);
-  URL.revokeObjectURL(url);
+  try {
+    const reponse = await fetch(`${cheminBaseIngress()}api/mappings/export.xlsx`, { cache: "no-store" });
+    if (!reponse.ok) throw new Error(`HTTP ${reponse.status}`);
+    const blob = await reponse.blob();
+    const url = URL.createObjectURL(blob);
+
+    const lien = document.createElement("a");
+    lien.href = url;
+    lien.download = "mappings.xlsx";
+    document.body.appendChild(lien);
+    lien.click();
+    document.body.removeChild(lien);
+    URL.revokeObjectURL(url);
+  } catch (exception) {
+    erreur.textContent = t("mappings_export_error") + exception.message;
+    erreur.style.display = "block";
+  }
 }
 
 function declencherImportMappings() {
@@ -1181,25 +1215,28 @@ async function importerMappingsDepuisFichier(fichier) {
   const erreur = el("error");
   erreur.style.display = "none";
 
-  let contenuJson;
+  // The workbook only tells us which HA/Git file or directory NAME was
+  // picked for each row (or a literal path typed in place of a name);
+  // resolving that against the real HA/Git trees can only happen
+  // server-side, so this first call is read-only — nothing is saved yet.
+  let resolus;
   try {
-    contenuJson = JSON.parse(await fichier.text());
+    const reponse = await fetch(`${cheminBaseIngress()}api/mappings/import-excel-preview`, {
+      method: "POST", cache: "no-store",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: await fichier.arrayBuffer(),
+    });
+    const donnees = await reponse.json();
+    if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
+    resolus = donnees.resolved;
   } catch (exception) {
-    erreur.textContent = t("mappings_import_error_parse");
+    erreur.textContent = t("mappings_import_error_resolve") + exception.message;
     erreur.style.display = "block";
     return;
   }
 
-  const mappingsImportes = Array.isArray(contenuJson) ? contenuJson : contenuJson.mappings;
-
-  if (!Array.isArray(mappingsImportes) || mappingsImportes.length === 0) {
-    erreur.textContent = t("mappings_import_error_shape");
-    erreur.style.display = "block";
-    return;
-  }
-
-  if (mappingsImportes.some((mapping) => !mapping || typeof mapping !== "object" || typeof mapping.id !== "string" || !mapping.id.trim())) {
-    erreur.textContent = t("mappings_import_error_invalid");
+  if (!Array.isArray(resolus) || resolus.length === 0) {
+    erreur.textContent = t("mappings_import_error_empty");
     erreur.style.display = "block";
     return;
   }
@@ -1208,16 +1245,8 @@ async function importerMappingsDepuisFichier(fichier) {
   let ajoutes = 0;
   let misAJour = 0;
 
-  for (const brut of mappingsImportes) {
-    const id = brut.id.trim();
-    const mapping = {
-      id, kind: brut.kind, direction: brut.direction,
-      ha_path: brut.ha_path, git_path: brut.git_path,
-      protect_from_git: !!brut.protect_from_git,
-      normalize_line_endings: !!brut.normalize_line_endings,
-    };
-
-    const indexExistant = nouvelleListe.findIndex((existant) => existant.id === id);
+  for (const mapping of resolus) {
+    const indexExistant = nouvelleListe.findIndex((existant) => existant.id === mapping.id);
 
     if (indexExistant === -1) {
       nouvelleListe.push(mapping);
@@ -2647,6 +2676,274 @@ def attendre_options_persistees(mappings_attendus: list, delai_max: float = 3.0)
     return mappings_correspondent(lire_options().get("mappings"), mappings_attendus)
 
 
+###############################################################################
+# BULK MAPPINGS EXPORT/IMPORT (Excel)
+#
+# Export produces an .xlsx workbook: one row per current mapping, plus a
+# handful of blank template rows, with dropdown lists (native Excel data
+# validation, no macro) for direction/kind/booleans and for the HA/Git
+# file or directory *name* — built by scanning the real trees at export
+# time. A dropdown only ever offers a bare name, never a full path: an
+# existing mapping's row instead carries its real, already-unambiguous
+# path directly (see construire_classeur_export), so re-importing an
+# untouched row can never fail just because some unrelated file
+# elsewhere happens to share its name.
+#
+# Import is a two-step, read-then-confirm flow, mirroring the previous
+# JSON import's UX: gerer_import_excel_preview() only resolves each row's
+# bare name against the current trees (or accepts a value containing "/"
+# as an already-complete literal path) and reports the result — nothing
+# is saved yet. Any name that resolves to zero or more-than-one match
+# fails the whole import, in one message covering every offending row
+# (checked before the browser is even asked to confirm anything). Only
+# once the browser has merged the resolved rows into the current list
+# and the user has confirmed does it call the existing, unrelated
+# /api/mappings endpoint to actually save — identical validation and
+# persistence path as every other way of editing mappings.
+###############################################################################
+
+def parcourir_tous_les_noms(racine: Path) -> list[tuple[str, str, str]]:
+    """Recursively walks `racine`, applying the exact same exclusions as
+    the directory browser (dotfiles/dotdirs, NOMS_IGNORES_NAVIGATION,
+    never following or listing symlinks). Returns (name, relative_path,
+    kind) for every file and directory found, relative_path being posix
+    and relative to `racine` itself."""
+
+    resultats: list[tuple[str, str, str]] = []
+
+    def parcourir(dossier: Path, prefixe: PurePosixPath) -> None:
+
+        try:
+            with os.scandir(dossier) as parcours:
+                entrees = list(parcours)
+        except OSError:
+            return
+
+        for entree in entrees:
+
+            if entree.name.startswith("."):
+                continue
+
+            if entree.name in NOMS_IGNORES_NAVIGATION:
+                continue
+
+            if entree.is_symlink():
+                continue
+
+            chemin_relatif = (prefixe / entree.name).as_posix()
+
+            if entree.is_dir(follow_symlinks=False):
+                resultats.append((entree.name, chemin_relatif, "directory"))
+                parcourir(Path(entree.path), prefixe / entree.name)
+            elif entree.is_file(follow_symlinks=False):
+                resultats.append((entree.name, chemin_relatif, "file"))
+
+    parcourir(racine, PurePosixPath())
+
+    return resultats
+
+
+def indexer_arborescence(racine: Path) -> dict[tuple[str, str], list[str]]:
+    """Builds a (kind, name) -> [relative paths] lookup for `racine`, used
+    to resolve a bare name typed or picked in an imported workbook. More
+    than one entry for a given key means that name is ambiguous under
+    this root."""
+
+    index: dict[tuple[str, str], list[str]] = {}
+
+    for nom, relatif, kind in parcourir_tous_les_noms(racine):
+        index.setdefault((kind, nom), []).append(relatif)
+
+    return index
+
+
+def valeur_booleenne(valeur) -> bool:
+    """Normalizes a workbook cell's value to a bool. Excel auto-recognizes
+    a bare typed TRUE/FALSE as a real Boolean cell (not text), so this
+    must accept both an actual bool and a "true"/"false" string."""
+
+    if isinstance(valeur, bool):
+        return valeur
+
+    return str(valeur if valeur is not None else "").strip().lower() == "true"
+
+
+def resoudre_ligne_excel(
+    valeur, index_arborescence: dict[tuple[str, str], list[str]], kind: str, formater_resultat
+) -> tuple[str | None, str | None]:
+    """Resolves one ha_file/git_file cell to a final path, or returns
+    (None, error_message). A value containing '/' is treated as an
+    already-complete path and used exactly as typed — this is also how
+    an existing mapping's own row round-trips safely (see
+    construire_classeur_export). A bare name is looked up in
+    `index_arborescence`; zero or more than one match is an error."""
+
+    valeur = str(valeur if valeur is not None else "").strip()
+
+    if not valeur:
+        return None, "missing file/directory name"
+
+    if "/" in valeur:
+        return valeur, None
+
+    correspondances = index_arborescence.get((kind, valeur), [])
+
+    if not correspondances:
+        return None, f"no {kind} named '{valeur}' found"
+
+    if len(correspondances) > 1:
+        return None, f"ambiguous {kind} name '{valeur}' — matches: {', '.join(sorted(correspondances))}"
+
+    return formater_resultat(correspondances[0]), None
+
+
+def construire_classeur_export() -> bytes:
+
+    elements = construire_etat().get("elements", [])
+
+    noms_ha = sorted({nom for nom, _, _ in parcourir_tous_les_noms(HA_ROOT)})[:EXCEL_DROPDOWN_MAX_ENTRIES]
+    noms_git = sorted({nom for nom, _, _ in parcourir_tous_les_noms(GIT_ROOT)})[:EXCEL_DROPDOWN_MAX_ENTRIES]
+
+    classeur = openpyxl.Workbook()
+    feuille = classeur.active
+    feuille.title = "Mappings"
+
+    feuille.append(["id", "kind", "direction", "ha_file", "git_file", "protect_from_git", "normalize_line_endings"])
+
+    for element in elements:
+        feuille.append([
+            element["id"], element["kind"], element["direction"],
+            element["ha_path"], element["git_path"],
+            "true" if element.get("protected") else "false",
+            "true" if element.get("normalize_line_endings") else "false",
+        ])
+
+    premiere_ligne_vide = len(elements) + 2
+    derniere_ligne = premiere_ligne_vide + EXCEL_TEMPLATE_BLANK_ROWS - 1
+
+    feuille_listes = classeur.create_sheet("Lists")
+    feuille_listes.sheet_state = "hidden"
+
+    for index, nom in enumerate(noms_ha, start=1):
+        feuille_listes.cell(row=index, column=1, value=nom)
+
+    for index, nom in enumerate(noms_git, start=1):
+        feuille_listes.cell(row=index, column=2, value=nom)
+
+    def plage(colonne: str, taille: int) -> str:
+        return f"=Lists!${colonne}$1:${colonne}${max(taille, 1)}"
+
+    # (column index, formula1) — an inline quoted list for the small,
+    # fixed-choice columns, a range reference into the hidden "Lists"
+    # sheet for the two name columns. showDropDown is left unset/False on
+    # purpose: in the underlying file format that is what actually shows
+    # the in-cell dropdown arrow, and — just as importantly — leaves
+    # Excel free to accept a value outside the list (a literal path)
+    # without popping up a blocking error.
+    validations = [
+        (2, '"file,directory"'),
+        (3, '"git_to_ha,ha_to_git,bidirectional"'),
+        (4, plage("A", len(noms_ha))),
+        (5, plage("B", len(noms_git))),
+        (6, '"true,false"'),
+        (7, '"true,false"'),
+    ]
+
+    for colonne_index, formule in validations:
+        validation = DataValidation(type="list", formula1=formule, allow_blank=True)
+        colonne_lettre = get_column_letter(colonne_index)
+        validation.add(f"{colonne_lettre}2:{colonne_lettre}{derniere_ligne}")
+        feuille.add_data_validation(validation)
+
+    for colonne_index, largeur in zip(range(1, 8), [18, 10, 14, 42, 42, 16, 20]):
+        feuille.column_dimensions[get_column_letter(colonne_index)].width = largeur
+
+    tampon = io.BytesIO()
+    classeur.save(tampon)
+
+    return tampon.getvalue()
+
+
+def gerer_export_excel(handler: "InterfaceHandler") -> None:
+
+    try:
+        contenu = construire_classeur_export()
+    except Exception as exc:
+        handler.repondre_json(500, {"ok": False, "error": f"could not build the export: {exc}"})
+        return
+
+    handler.repondre_telechargement(
+        contenu, "mappings.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+def gerer_import_excel_preview(handler: "InterfaceHandler") -> None:
+
+    corps = handler.lire_corps_borne(EXCEL_UPLOAD_MAX_BYTES)
+
+    if corps is None:
+        return
+
+    try:
+        classeur = openpyxl.load_workbook(io.BytesIO(corps), data_only=True, read_only=True)
+    except Exception:
+        handler.repondre_json(400, {"ok": False, "error": "this file is not a valid Excel (.xlsx) workbook"})
+        return
+
+    feuille = classeur["Mappings"] if "Mappings" in classeur.sheetnames else classeur.worksheets[0]
+
+    index_ha = indexer_arborescence(HA_ROOT)
+    index_git = indexer_arborescence(GIT_ROOT)
+
+    erreurs: list[str] = []
+    resolus: list[dict] = []
+
+    for numero, ligne in enumerate(feuille.iter_rows(min_row=2, values_only=True), start=2):
+
+        if ligne is None or all(valeur is None or str(valeur).strip() == "" for valeur in ligne):
+            continue  # a blank template row
+
+        valeurs = list(ligne) + [None] * max(0, 7 - len(ligne))
+        id_brut, kind_brut, direction_brut, ha_file_brut, git_file_brut, protect_brut, normalize_brut = valeurs[:7]
+
+        id_element = str(id_brut if id_brut is not None else "").strip()
+        kind = str(kind_brut if kind_brut is not None else "").strip() or "file"
+
+        if not id_element:
+            erreurs.append(f"row {numero}: missing id")
+            continue
+
+        ha_path, erreur_ha = resoudre_ligne_excel(ha_file_brut, index_ha, kind, relatif_vers_ha_path)
+
+        if erreur_ha:
+            erreurs.append(f"row {numero} ({id_element}): {erreur_ha}")
+
+        git_path, erreur_git = resoudre_ligne_excel(git_file_brut, index_git, kind, lambda relatif: relatif)
+
+        if erreur_git:
+            erreurs.append(f"row {numero} ({id_element}): {erreur_git}")
+
+        if erreur_ha or erreur_git:
+            continue
+
+        resolus.append({
+            "id": id_element,
+            "kind": kind,
+            "direction": str(direction_brut if direction_brut is not None else "").strip(),
+            "ha_path": ha_path,
+            "git_path": git_path,
+            "protect_from_git": valeur_booleenne(protect_brut),
+            "normalize_line_endings": valeur_booleenne(normalize_brut),
+        })
+
+    if erreurs:
+        handler.repondre_json(400, {"ok": False, "error": "\n".join(erreurs)})
+        return
+
+    handler.repondre_json(200, {"ok": True, "resolved": resolus})
+
+
 def gerer_sauvegarde_mappings(handler: "InterfaceHandler") -> None:
 
     corps_requete = handler.lire_corps_borne(REQUEST_PAYLOAD_MAX_BYTES)
@@ -3163,6 +3460,18 @@ class InterfaceHandler(BaseHTTPRequestHandler):
         self.envoyer_entetes(statut, "application/json; charset=utf-8")
         self.wfile.write(corps)
 
+    def repondre_telechargement(self, contenu: bytes, nom_fichier: str, type_contenu: str) -> None:
+
+        self.send_response(200)
+        self.send_header("Content-Type", type_contenu)
+        self.send_header("Content-Disposition", f'attachment; filename="{nom_fichier}"')
+        self.send_header("Content-Length", str(len(contenu)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.end_headers()
+        self.wfile.write(contenu)
+
     def lire_corps_borne(self, max_bytes: int) -> bytes | None:
         """Reads the request body, bounded to `max_bytes`. Responds with
         an error and returns None on an invalid or oversized
@@ -3208,6 +3517,10 @@ class InterfaceHandler(BaseHTTPRequestHandler):
 
         if chemin.endswith("/api/backups"):
             gerer_liste_sauvegardes(self)
+            return
+
+        if chemin.endswith("/api/mappings/export.xlsx"):
+            gerer_export_excel(self)
             return
 
         if chemin.endswith("/health"):
@@ -3332,6 +3645,10 @@ class InterfaceHandler(BaseHTTPRequestHandler):
 
             donnees = construire_etat()
             self.repondre_json(200 if donnees.get("ok") else 503, donnees)
+            return
+
+        if chemin.endswith("/api/mappings/import-excel-preview"):
+            gerer_import_excel_preview(self)
             return
 
         if chemin.endswith("/api/mappings"):

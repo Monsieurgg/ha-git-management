@@ -76,18 +76,34 @@ field of the mapping stays as it was. A failed save reverts the dropdown
 to its previous value rather than leaving it showing something that
 wasn't actually saved.
 
-**Bulk export/import.** "Export mappings" downloads the current list as a
-JSON file, useful to see its exact structure or to reuse it for another
-install. "Import mappings" reads a JSON file back — either that same
-`{"mappings": [...]}` shape or a plain array — and merges it into the
-current list: any mapping whose `id` matches an existing one is updated,
-any other `id` is added, nothing already configured is removed. A short
-summary ("N new, M updated") is shown before anything is saved, and the
-import goes through the exact same save path and validation as adding a
-mapping by hand, so a bad entry in the file is rejected with the same
+**Bulk export/import (Excel).** "Export mappings (Excel)" downloads an
+`.xlsx` workbook: one row per current mapping, plus a few blank rows
+ready to fill in. The HA file and Git file columns are native Excel
+dropdown lists (no macro) built by scanning the actual Home Assistant
+config and Git repository trees at export time — click the arrow, or
+click the cell and start typing to jump to a matching name.
+
+Those dropdowns only ever offer a bare file/directory *name*
+("configuration.yaml"), never a full path. "Import mappings (Excel)"
+resolves each name against the current tree before anything is saved: a
+name matching exactly one file or directory becomes that file's full
+path automatically; a name matching none, or matching more than one
+(two files sharing a name in different folders, say), fails the whole
+import up front with a message naming every offending row — nothing is
+saved on a partial or ambiguous import. Typing a value that contains a
+`/` instead of picking from the dropdown is treated as an already-
+complete path and used exactly as typed, no lookup: the way out when a
+name is genuinely ambiguous, and also how an existing, untouched
+mapping's own row (always exported as its real full path, never a bare
+name) survives a re-import unaffected by anything else in either tree.
+
+Once every row resolves, a short summary ("N new, M updated") is shown
+for confirmation, and the import goes through the exact same save path
+and validation as adding a mapping by hand — a bad entry (an unknown
+`direction`, a `kind`/path mismatch, ...) is rejected with the same
 clear error instead of silently corrupting the list. This is meant for
-setting up many mappings at once, rather than repeating the Add-a-mapping
-form one path at a time.
+setting up many mappings at once, rather than repeating the
+Add-a-mapping form one path at a time.
 
 ## Pushing Home Assistant changes to Git (ha_to_git)
 
