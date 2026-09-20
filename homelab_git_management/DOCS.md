@@ -14,6 +14,12 @@ repository [`README.md`](../README.md) for the installation procedure.
 4. Fill in `github_repository` and `github_branch` in the Configuration
    tab, add at least one entry under `mappings`, and restart.
 
+Filled in `github_repository` before adding the key to GitHub, out of
+order? That's fine — the add-on falls back to the same setup screen
+(key, plus the repository/branch already saved) instead of refusing to
+start, so the key is always reachable from the web UI. Add it on
+GitHub, then restart the add-on again.
+
 ## Options reference
 
 | Option | Type | Description |

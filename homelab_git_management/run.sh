@@ -258,62 +258,79 @@ if [ "$REPOSITORY_CONFIGURED" = true ]; then
     echo "[homelab-git-management] Testing GitHub access..."
 
     if ! GIT_SSH_COMMAND="$GITHUB_SSH_COMMAND" git ls-remote "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-        bashio::exit.nok "Cannot reach GitHub. Make sure the public key shown in the Ingress UI was added as a Deploy Key on ${GITHUB_REPOSITORY_OPTION}."
-    fi
 
-    echo "[homelab-git-management] GitHub read access: OK"
+        # Deliberately NOT fatal: a very common first-time sequence is
+        # setting github_repository before ever adding the Deploy Key on
+        # GitHub. Crashing here would stop the Ingress UI from starting
+        # at all — the only place that ever shows the key to add — which
+        # would permanently lock a user out of finishing setup with no
+        # way back except editing options.json by hand. Skip the rest of
+        # Git setup for this boot instead; construire_setup() only
+        # reports "configured" once a real clone exists, so the
+        # dashboard falls back to the same setup screen shown before any
+        # repository is configured, with the key still right there to
+        # copy. Restarting the add-on after adding the key retries this
+        # same check.
+        echo "[homelab-git-management] WARNING: cannot reach GitHub yet."
+        echo "[homelab-git-management] Make sure the public key shown in the web UI was added as a Deploy Key on ${GITHUB_REPOSITORY_OPTION}, then restart this add-on."
 
-    GIT_REPOSITORY_DIR="${DATA_DIR}/repository"
+    else
 
-    if [ -L "$GIT_REPOSITORY_DIR" ]; then
-        bashio::exit.nok "repository clone path must not be a symlink"
-    fi
+        echo "[homelab-git-management] GitHub read access: OK"
 
-    if [ ! -e "$GIT_REPOSITORY_DIR" ]; then
+        GIT_REPOSITORY_DIR="${DATA_DIR}/repository"
 
-        GIT_CLONE_TMP="${DATA_DIR}/.repository-clone.$$"
-
-        if [ -e "$GIT_CLONE_TMP" ]; then
-            bashio::exit.nok "temporary clone path already exists"
+        if [ -L "$GIT_REPOSITORY_DIR" ]; then
+            bashio::exit.nok "repository clone path must not be a symlink"
         fi
 
-        if ! GIT_SSH_COMMAND="$GITHUB_SSH_COMMAND" git clone \
-                --branch "$GITHUB_BRANCH" \
-                --single-branch \
-                --depth 1 \
-                "$GITHUB_REPOSITORY" \
-                "$GIT_CLONE_TMP"; then
+        if [ ! -e "$GIT_REPOSITORY_DIR" ]; then
 
-            rm -rf "$GIT_CLONE_TMP"
-            bashio::exit.nok "Clone failed"
+            GIT_CLONE_TMP="${DATA_DIR}/.repository-clone.$$"
+
+            if [ -e "$GIT_CLONE_TMP" ]; then
+                bashio::exit.nok "temporary clone path already exists"
+            fi
+
+            if ! GIT_SSH_COMMAND="$GITHUB_SSH_COMMAND" git clone \
+                    --branch "$GITHUB_BRANCH" \
+                    --single-branch \
+                    --depth 1 \
+                    "$GITHUB_REPOSITORY" \
+                    "$GIT_CLONE_TMP"; then
+
+                rm -rf "$GIT_CLONE_TMP"
+                bashio::exit.nok "Clone failed"
+
+            fi
+
+            mv "$GIT_CLONE_TMP" "$GIT_REPOSITORY_DIR"
 
         fi
 
-        mv "$GIT_CLONE_TMP" "$GIT_REPOSITORY_DIR"
+        if [ ! -d "${GIT_REPOSITORY_DIR}/.git" ]; then
+            bashio::exit.nok "Invalid Git repository at ${GIT_REPOSITORY_DIR}"
+        fi
+
+        GIT_ORIGIN="$(git -C "$GIT_REPOSITORY_DIR" remote get-url origin 2>/dev/null || true)"
+
+        if [ "$GIT_ORIGIN" != "$GITHUB_REPOSITORY" ]; then
+            bashio::exit.nok "Unexpected Git origin (repository option changed?): ${GIT_ORIGIN}"
+        fi
+
+        GIT_CURRENT_BRANCH="$(git -C "$GIT_REPOSITORY_DIR" branch --show-current 2>/dev/null || true)"
+
+        if [ "$GIT_CURRENT_BRANCH" != "$GITHUB_BRANCH" ]; then
+            bashio::exit.nok "Unexpected current branch: ${GIT_CURRENT_BRANCH}"
+        fi
+
+        echo "[homelab-git-management] Running the engine's initial validation..."
+
+        python3 /app/gestionnaire.py
+
+        echo "[homelab-git-management] Engine: OK"
 
     fi
-
-    if [ ! -d "${GIT_REPOSITORY_DIR}/.git" ]; then
-        bashio::exit.nok "Invalid Git repository at ${GIT_REPOSITORY_DIR}"
-    fi
-
-    GIT_ORIGIN="$(git -C "$GIT_REPOSITORY_DIR" remote get-url origin 2>/dev/null || true)"
-
-    if [ "$GIT_ORIGIN" != "$GITHUB_REPOSITORY" ]; then
-        bashio::exit.nok "Unexpected Git origin (repository option changed?): ${GIT_ORIGIN}"
-    fi
-
-    GIT_CURRENT_BRANCH="$(git -C "$GIT_REPOSITORY_DIR" branch --show-current 2>/dev/null || true)"
-
-    if [ "$GIT_CURRENT_BRANCH" != "$GITHUB_BRANCH" ]; then
-        bashio::exit.nok "Unexpected current branch: ${GIT_CURRENT_BRANCH}"
-    fi
-
-    echo "[homelab-git-management] Running the engine's initial validation..."
-
-    python3 /app/gestionnaire.py
-
-    echo "[homelab-git-management] Engine: OK"
 
 else
 

@@ -41,6 +41,18 @@ All notable changes to this add-on are documented here.
   that already exists is always left untouched; creating on the Git
   side is a real commit + push. Works for a single mapping from the
   form, or for many at once from an Excel import.
+- **Fixed a pre-existing setup lockout:** if `github_repository` was
+  filled in before the Deploy Key was ever added on GitHub (an easy
+  first-time mistake, since nothing else about the setup screen
+  prevents it), the add-on used to refuse to start at all — including
+  its own web UI, the only place that ever shows the key to add. That
+  left no way back into the UI to actually add the key, short of
+  editing `options.json` by hand to unset `github_repository`. GitHub
+  being unreachable at boot is no longer fatal: this add-on now falls
+  back to the same setup screen shown before any repository is
+  configured — key, and the repository/branch already saved, both
+  still shown — instead of stopping, and restarting after adding the
+  key retries normally.
 
 ## 2.2.0 — config check + auto-rollback, Home Assistant notifications
 

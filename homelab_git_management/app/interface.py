@@ -2023,6 +2023,18 @@ def construire_setup() -> dict:
         except Exception:
             public_key_write = None
 
+    # A repository *option* being set is not the same as a real, usable
+    # clone existing: run.sh deliberately does not crash the whole add-on
+    # (and with it, this very screen) just because GitHub wasn't
+    # reachable yet at boot — most commonly because github_repository was
+    # filled in before the Deploy Key was ever added on GitHub. In that
+    # case the clone was skipped for this boot, so falling back to the
+    # same setup screen shown before any repository is configured at all
+    # (key + the repository/branch already saved) is the only way this
+    # ever becomes recoverable from the UI instead of requiring a manual
+    # edit of options.json.
+    clone_pret = (GIT_ROOT / ".git").is_dir()
+
     config_url = None
 
     if not repo:
@@ -2034,7 +2046,7 @@ def construire_setup() -> dict:
 
     return {
         "ok": True,
-        "configured": bool(repo),
+        "configured": bool(repo) and clone_pret,
         "github_repository": repo,
         "github_branch": options.get("github_branch") or "main",
         "public_key": public_key,
