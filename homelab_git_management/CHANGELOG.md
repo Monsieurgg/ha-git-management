@@ -2,6 +2,23 @@
 
 All notable changes to this add-on are documented here.
 
+## 2.3.0 — bulk mappings export/import
+
+- New: "Export mappings" and "Import mappings" buttons next to
+  "+ Add a mapping". Export downloads the current mappings list as a
+  JSON file; Import reads a JSON file back (the same format, or a plain
+  array of mappings) and merges it into the current list — updating any
+  mapping whose `id` already exists, adding any new one — instead of
+  replacing the list outright. A summary ("N new, M updated") is shown
+  for confirmation before anything is saved. Meant for setting up many
+  mappings at once instead of one by one through the form, or for
+  reusing the same structure across installs.
+- No backend changes: import reuses the existing `/api/mappings`
+  endpoint and its existing validation, so an imported mapping is held
+  to exactly the same rules as one entered by hand — a bad entry blocks
+  the whole import with the same clear error message the manual form
+  already gives.
+
 ## 2.2.0 — config check + auto-rollback, Home Assistant notifications
 
 - **New permission:** `homeassistant_api: true`. This grants access to

@@ -322,6 +322,9 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
         <div class="panel-header-actions">
           <div id="status-line" class="status-line" data-i18n="loading">Loading…</div>
           <button id="add-mapping" type="button" data-i18n="mappings_add">+ Add a mapping</button>
+          <button id="export-mappings" type="button" data-i18n="mappings_export">Export mappings</button>
+          <button id="import-mappings" type="button" data-i18n="mappings_import">Import mappings</button>
+          <input id="import-mappings-input" type="file" accept="application/json,.json" hidden>
         </div>
       </div>
       <div class="table-wrapper">
@@ -541,6 +544,12 @@ const STRINGS = {
     copy_key: "Copy", copied_key: "Copied!",
     setup_open_config: "Open the Configuration tab →",
     mappings_add: "+ Add a mapping",
+    mappings_export: "Export mappings", mappings_import: "Import mappings",
+    mappings_import_error_parse: "This file is not valid JSON.",
+    mappings_import_error_shape: 'Expected a JSON file with a "mappings" array (or a plain array), as produced by "Export mappings".',
+    mappings_import_error_invalid: "Every mapping in the file must have an id.",
+    mappings_import_confirm: "Import this file? {added} new mapping(s), {updated} updated — {total} total after import. Nothing is saved until you confirm.",
+    mappings_import_error_save: "Import failed: ",
     th_ha_path: "HA path", th_git_path: "Git path", th_direction: "Direction", th_manage: "Manage",
     mapping_edit: "Edit", mapping_delete: "Delete", mapping_normalize: "Make identical",
     mapping_compare_force: "Compare & force a version",
@@ -636,6 +645,12 @@ const STRINGS = {
     setup_none: "non défini",
     setup_open_config: "Ouvrir l'onglet Configuration →",
     mappings_add: "+ Ajouter un mapping",
+    mappings_export: "Exporter les mappings", mappings_import: "Importer des mappings",
+    mappings_import_error_parse: "Ce fichier n'est pas un JSON valide.",
+    mappings_import_error_shape: 'Un fichier JSON avec un tableau "mappings" (ou un simple tableau) est attendu, comme celui produit par "Exporter les mappings".',
+    mappings_import_error_invalid: "Chaque mapping du fichier doit avoir un id.",
+    mappings_import_confirm: "Importer ce fichier ? {added} nouveau(x) mapping(s), {updated} mis à jour — {total} au total après import. Rien n'est enregistré tant que vous ne confirmez pas.",
+    mappings_import_error_save: "Échec de l'import : ",
     th_ha_path: "Chemin HA", th_git_path: "Chemin Git", th_direction: "Direction", th_manage: "Gérer",
     mapping_edit: "Modifier", mapping_delete: "Supprimer", mapping_normalize: "Rendre identique",
     mapping_compare_force: "Comparer et forcer une version",
@@ -1138,6 +1153,102 @@ async function supprimerMapping(id) {
     }
   } catch (exception) {
     erreur.textContent = t("mapping_error_delete") + exception.message;
+    erreur.style.display = "block";
+  }
+}
+
+function exporterMappings() {
+  const payload = { mappings: copierMappingsPourEnvoi() };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+
+  const lien = document.createElement("a");
+  lien.href = url;
+  lien.download = "mappings.json";
+  document.body.appendChild(lien);
+  lien.click();
+  document.body.removeChild(lien);
+  URL.revokeObjectURL(url);
+}
+
+function declencherImportMappings() {
+  // Reset first so re-selecting the exact same file still fires "change".
+  el("import-mappings-input").value = "";
+  el("import-mappings-input").click();
+}
+
+async function importerMappingsDepuisFichier(fichier) {
+  const erreur = el("error");
+  erreur.style.display = "none";
+
+  let contenuJson;
+  try {
+    contenuJson = JSON.parse(await fichier.text());
+  } catch (exception) {
+    erreur.textContent = t("mappings_import_error_parse");
+    erreur.style.display = "block";
+    return;
+  }
+
+  const mappingsImportes = Array.isArray(contenuJson) ? contenuJson : contenuJson.mappings;
+
+  if (!Array.isArray(mappingsImportes) || mappingsImportes.length === 0) {
+    erreur.textContent = t("mappings_import_error_shape");
+    erreur.style.display = "block";
+    return;
+  }
+
+  if (mappingsImportes.some((mapping) => !mapping || typeof mapping !== "object" || typeof mapping.id !== "string" || !mapping.id.trim())) {
+    erreur.textContent = t("mappings_import_error_invalid");
+    erreur.style.display = "block";
+    return;
+  }
+
+  const nouvelleListe = copierMappingsPourEnvoi();
+  let ajoutes = 0;
+  let misAJour = 0;
+
+  for (const brut of mappingsImportes) {
+    const id = brut.id.trim();
+    const mapping = {
+      id, kind: brut.kind, direction: brut.direction,
+      ha_path: brut.ha_path, git_path: brut.git_path,
+      protect_from_git: !!brut.protect_from_git,
+      normalize_line_endings: !!brut.normalize_line_endings,
+    };
+
+    const indexExistant = nouvelleListe.findIndex((existant) => existant.id === id);
+
+    if (indexExistant === -1) {
+      nouvelleListe.push(mapping);
+      ajoutes++;
+    } else {
+      nouvelleListe[indexExistant] = mapping;
+      misAJour++;
+    }
+  }
+
+  const resume = t("mappings_import_confirm")
+    .replace("{added}", ajoutes).replace("{updated}", misAJour).replace("{total}", nouvelleListe.length);
+
+  if (!window.confirm(resume)) return;
+
+  try {
+    const reponse = await fetch(`${cheminBaseIngress()}api/mappings`, {
+      method: "POST", cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mappings: nouvelleListe }),
+    });
+    const donnees = await reponse.json();
+    if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
+
+    if (donnees.restarting) {
+      attendreRedemarrage();
+    } else {
+      afficherEtat(donnees);
+    }
+  } catch (exception) {
+    erreur.textContent = t("mappings_import_error_save") + exception.message;
     erreur.style.display = "block";
   }
 }
@@ -1738,6 +1849,12 @@ el("backups-modal-close").addEventListener("click", fermerSauvegardesModal);
 el("backups-cancel").addEventListener("click", fermerSauvegardesModal);
 
 el("add-mapping").addEventListener("click", () => ouvrirModalMapping(null));
+el("export-mappings").addEventListener("click", exporterMappings);
+el("import-mappings").addEventListener("click", declencherImportMappings);
+el("import-mappings-input").addEventListener("change", (event) => {
+  const fichier = event.target.files && event.target.files[0];
+  if (fichier) importerMappingsDepuisFichier(fichier);
+});
 el("mapping-modal-close").addEventListener("click", fermerModalMapping);
 el("mapping-cancel").addEventListener("click", fermerModalMapping);
 el("mapping-save").addEventListener("click", sauvegarderMapping);
@@ -3029,7 +3146,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/2.2.0"
+    server_version = "HomelabGitManagement/2.3.0"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 

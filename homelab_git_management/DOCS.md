@@ -76,6 +76,19 @@ field of the mapping stays as it was. A failed save reverts the dropdown
 to its previous value rather than leaving it showing something that
 wasn't actually saved.
 
+**Bulk export/import.** "Export mappings" downloads the current list as a
+JSON file, useful to see its exact structure or to reuse it for another
+install. "Import mappings" reads a JSON file back — either that same
+`{"mappings": [...]}` shape or a plain array — and merges it into the
+current list: any mapping whose `id` matches an existing one is updated,
+any other `id` is added, nothing already configured is removed. A short
+summary ("N new, M updated") is shown before anything is saved, and the
+import goes through the exact same save path and validation as adding a
+mapping by hand, so a bad entry in the file is rejected with the same
+clear error instead of silently corrupting the list. This is meant for
+setting up many mappings at once, rather than repeating the Add-a-mapping
+form one path at a time.
+
 ## Pushing Home Assistant changes to Git (ha_to_git)
 
 A mapping configured with `direction: ha_to_git` does the reverse of the
