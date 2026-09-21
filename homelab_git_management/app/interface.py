@@ -3680,7 +3680,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/2.4.0"
+    server_version = "HomelabGitManagement/2.4.1"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 

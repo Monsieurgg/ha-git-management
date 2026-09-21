@@ -38,7 +38,7 @@
 
 set -e
 
-APP_VERSION="2.4.0"
+APP_VERSION="2.4.1"
 
 export APP_VERSION
 

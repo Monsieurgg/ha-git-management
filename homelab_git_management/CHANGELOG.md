@@ -2,6 +2,15 @@
 
 All notable changes to this add-on are documented here.
 
+## 2.4.1 — fix a stale label
+
+- Fixed: the mapping form's Type dropdown still said "Directory
+  (comparison only)" for a directory mapping — true before 2.4.0, false
+  since, and confusing given directory mappings can now be deployed,
+  pushed, and force-resolved like any file mapping. The label (and a
+  matching stale comment in the engine) now says what a directory
+  mapping actually does.
+
 ## 2.4.0 — directory mappings can now actually sync
 
 - New: a "Directory" mapping can now be deployed, pushed, and — for a
