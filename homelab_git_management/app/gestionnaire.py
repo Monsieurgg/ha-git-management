@@ -35,7 +35,9 @@
 #     considered (ha_to_git / bidirectional are accepted by the options
 #     schema but rejected at startup: not implemented yet);
 #   - confirm:true is mandatory on every deployment;
-#   - directories cannot be deployed (comparison only);
+#   - a directory mapping is deployed/pushed as a whole-tree mirror
+#     (add/update/delete), the same safety rules applying to every file
+#     in it;
 #   - a persistent backup is made before any replacement;
 #   - replacement is atomic;
 #   - the result is verified byte-for-byte;

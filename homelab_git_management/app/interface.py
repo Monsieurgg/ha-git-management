@@ -394,7 +394,7 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
       <label class="form-label" data-i18n="field_kind">Type</label>
       <select id="mapping-kind" class="form-input">
         <option value="file" data-i18n="kind_file">File</option>
-        <option value="directory" data-i18n="kind_directory">Directory (comparison only)</option>
+        <option value="directory" data-i18n="kind_directory">Directory (whole tree, mirrored)</option>
       </select>
 
       <label class="form-label" data-i18n="field_direction">Direction</label>
@@ -605,7 +605,7 @@ const STRINGS = {
     field_normalize_line_endings: "🔧 Auto-fix line endings on Push instead of blocking",
     field_create_if_missing: "📄 Create the file/directory now on any side where it doesn't exist yet",
     confirm_unprotect_core: "You are about to save \"{target}\" WITHOUT protection, on a core Home Assistant config file. This is strongly discouraged — a bad deployment could break your Home Assistant instance. Continue anyway?",
-    kind_file: "File", kind_directory: "Directory (comparison only)",
+    kind_file: "File", kind_directory: "Directory (whole tree, mirrored)",
     dir_git_to_ha: "Git -> Home Assistant",
     dir_ha_to_git: "Home Assistant -> Git",
     dir_bidirectional: "Bidirectional",
@@ -711,7 +711,7 @@ const STRINGS = {
     field_normalize_line_endings: "🔧 Corriger auto. les fins de ligne au Push au lieu de bloquer",
     field_create_if_missing: "📄 Créer le fichier/dossier maintenant du côté où il n'existe pas encore",
     confirm_unprotect_core: "Vous êtes sur le point d'enregistrer « {target} » SANS protection, sur un fichier de configuration essentiel de Home Assistant. C'est fortement déconseillé — un mauvais déploiement pourrait casser votre instance Home Assistant. Continuer quand même ?",
-    kind_file: "Fichier", kind_directory: "Dossier (comparaison uniquement)",
+    kind_file: "Fichier", kind_directory: "Dossier (arborescence complète, miroir)",
     dir_git_to_ha: "Git -> Home Assistant",
     dir_ha_to_git: "Home Assistant -> Git",
     dir_bidirectional: "Bidirectionnel",
