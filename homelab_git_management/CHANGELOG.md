@@ -41,18 +41,31 @@ All notable changes to this add-on are documented here.
   that already exists is always left untouched; creating on the Git
   side is a real commit + push. Works for a single mapping from the
   form, or for many at once from an Excel import.
-- **Fixed a pre-existing setup lockout:** if `github_repository` was
+- **Fixed a pre-existing setup lockout, then hardened the whole startup
+  path against the same class of bug:** if `github_repository` was
   filled in before the Deploy Key was ever added on GitHub (an easy
   first-time mistake, since nothing else about the setup screen
   prevents it), the add-on used to refuse to start at all — including
   its own web UI, the only place that ever shows the key to add. That
   left no way back into the UI to actually add the key, short of
   editing `options.json` by hand to unset `github_repository`. GitHub
-  being unreachable at boot is no longer fatal: this add-on now falls
-  back to the same setup screen shown before any repository is
-  configured — key, and the repository/branch already saved, both
-  still shown — instead of stopping, and restarting after adding the
-  key retries normally.
+  being unreachable at boot is no longer fatal, and neither is any
+  other recoverable problem in that same startup sequence: a clone
+  that fails on a transient network issue, a stale temporary clone
+  left over from an earlier failed attempt (now cleaned up
+  automatically instead of blocking every future boot), an existing
+  local clone that no longer matches a changed `github_repository` or
+  `github_branch`, or the engine's own initial validation rejecting a
+  mapping. None of these stop the add-on's own web UI from starting
+  any more — it falls back to the same setup screen shown before any
+  repository is configured (key, and the repository/branch already
+  saved, both still shown), now also naming the *specific* reason
+  directly on that screen instead of leaving it to the Supervisor log.
+  Restarting the add-on after acting on it retries normally. The
+  handful of checks that remain fatal (a symlink where a real file is
+  expected, GitHub's SSH host key not matching its pinned fingerprint)
+  guard against tampering, not an ordinary setup mistake, and stay
+  fatal on purpose.
 
 ## 2.2.0 — config check + auto-rollback, Home Assistant notifications
 

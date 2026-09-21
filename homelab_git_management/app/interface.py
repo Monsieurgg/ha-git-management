@@ -1421,6 +1421,18 @@ async function chargerEtatSiConfigure() {
         lienConfig.hidden = true;
       }
 
+      // Only set when a repository IS configured but this boot couldn't
+      // finish setting it up (GitHub unreachable, a stale/mismatched
+      // clone, ...) — the specific reason from run.sh, so this doesn't
+      // read as a silent, unexplained "not configured yet" to someone
+      // who already filled everything in correctly.
+      if (setup.warning) {
+        erreur.textContent = setup.warning;
+        erreur.style.display = "block";
+      } else {
+        erreur.style.display = "none";
+      }
+
       return;
     }
 
@@ -2052,6 +2064,16 @@ def construire_setup() -> dict:
         "public_key": public_key,
         "public_key_write": public_key_write,
         "config_url": config_url,
+        # Set by run.sh (read once at process start, fixed for this
+        # boot) only when a repository IS configured but this boot
+        # couldn't finish setting it up — GitHub unreachable, a stale or
+        # mismatched local clone, a failed clone, or the engine's own
+        # initial validation failing. None of those are ever fatal to
+        # this add-on's own startup any more; this is the specific
+        # reason, shown directly on the setup screen instead of leaving
+        # someone who already did everything right guessing why they're
+        # still looking at it.
+        "warning": os.environ.get("GIT_SETUP_WARNING") or None,
     }
 
 

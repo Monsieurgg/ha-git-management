@@ -20,6 +20,16 @@ order? That's fine — the add-on falls back to the same setup screen
 start, so the key is always reachable from the web UI. Add it on
 GitHub, then restart the add-on again.
 
+More generally: nothing about setting up or reconfiguring the
+repository (GitHub not reachable yet, a stale clone left over from an
+interrupted attempt, an existing clone that no longer matches a changed
+`github_repository`/`github_branch`) ever stops the web UI itself from
+starting. Whatever the specific reason is, it's shown directly on this
+same setup screen, and restarting the add-on after acting on it (adding
+the key, removing `/data/repository` via the **Terminal & SSH** or
+**File editor** add-on if a stale clone needs to go, ...) retries
+normally.
+
 ## Options reference
 
 | Option | Type | Description |

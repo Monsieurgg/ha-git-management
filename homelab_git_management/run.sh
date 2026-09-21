@@ -226,110 +226,132 @@ fi
 # GITHUB IDENTITY + CLONE (only if a repository is configured)
 ###############################################################################
 
-if [ "$REPOSITORY_CONFIGURED" = true ]; then
+# Everything in this function that can plausibly fail for a reason the
+# user can actually act on (GitHub unreachable, a stale/mismatched local
+# clone, a bad mapping) sets GIT_SETUP_WARNING and returns 1 instead of
+# calling bashio::exit.nok. Crashing the whole container here would stop
+# the Ingress UI from starting at all — the only place this add-on ever
+# shows the Deploy Key to add, or the specific reason something didn't
+# come up — which would permanently lock a user out with no way back
+# except editing options.json by hand. construire_setup() only reports
+# "configured" once a real clone actually exists, so any failure in here
+# falls back to the same setup screen shown before any repository is
+# configured, now also carrying GIT_SETUP_WARNING's specific reason.
+# Restarting the add-on after acting on it retries this same sequence.
+#
+# Left as genuinely fatal (unchanged, still bashio::exit.nok): the
+# symlink checks and the GitHub host key fingerprint pin. Those guard
+# against tampering, not against an ordinary setup mistake or a
+# transient network issue — continuing past any of them would be unsafe
+# regardless of what the UI could show about it.
+configure_repository() {
 
-    GITHUB_KNOWN_HOSTS="${SSH_DIR}/known_hosts"
+    local known_hosts="${SSH_DIR}/known_hosts"
 
-    GITHUB_HOST_KEY="github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
-    GITHUB_HOST_FINGERPRINT_EXPECTED="SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"
+    local host_key="github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+    local host_fingerprint_expected="SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"
 
-    if [ -L "$GITHUB_KNOWN_HOSTS" ]; then
+    if [ -L "$known_hosts" ]; then
         bashio::exit.nok "known_hosts must not be a symlink"
     fi
 
-    printf '%s\n' "$GITHUB_HOST_KEY" > "$GITHUB_KNOWN_HOSTS"
-    chown root:root "$GITHUB_KNOWN_HOSTS"
-    chmod 644 "$GITHUB_KNOWN_HOSTS"
+    printf '%s\n' "$host_key" > "$known_hosts"
+    chown root:root "$known_hosts"
+    chmod 644 "$known_hosts"
 
-    GITHUB_HOST_FINGERPRINT_ACTUAL="$(ssh-keygen -E sha256 -l -f "$GITHUB_KNOWN_HOSTS" | awk '{print $2}')"
+    local host_fingerprint_actual
+    host_fingerprint_actual="$(ssh-keygen -E sha256 -l -f "$known_hosts" | awk '{print $2}')"
 
-    if [ "$GITHUB_HOST_FINGERPRINT_ACTUAL" != "$GITHUB_HOST_FINGERPRINT_EXPECTED" ]; then
+    if [ "$host_fingerprint_actual" != "$host_fingerprint_expected" ]; then
         bashio::exit.nok "Unexpected GitHub host key fingerprint"
     fi
 
-    GITHUB_SSH_COMMAND="ssh \
+    local ssh_command="ssh \
 -i ${SSH_PRIVATE_KEY} \
 -o IdentitiesOnly=yes \
 -o BatchMode=yes \
 -o StrictHostKeyChecking=yes \
--o UserKnownHostsFile=${GITHUB_KNOWN_HOSTS} \
+-o UserKnownHostsFile=${known_hosts} \
 -o HostKeyAlgorithms=ssh-ed25519"
 
     echo "[homelab-git-management] Testing GitHub access..."
 
-    if ! GIT_SSH_COMMAND="$GITHUB_SSH_COMMAND" git ls-remote "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+    if ! GIT_SSH_COMMAND="$ssh_command" git ls-remote "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+        GIT_SETUP_WARNING="Cannot reach GitHub yet. Make sure the public key shown below was added as a read-only Deploy Key on ${GITHUB_REPOSITORY_OPTION}, then restart this add-on."
+        return 1
+    fi
 
-        # Deliberately NOT fatal: a very common first-time sequence is
-        # setting github_repository before ever adding the Deploy Key on
-        # GitHub. Crashing here would stop the Ingress UI from starting
-        # at all — the only place that ever shows the key to add — which
-        # would permanently lock a user out of finishing setup with no
-        # way back except editing options.json by hand. Skip the rest of
-        # Git setup for this boot instead; construire_setup() only
-        # reports "configured" once a real clone exists, so the
-        # dashboard falls back to the same setup screen shown before any
-        # repository is configured, with the key still right there to
-        # copy. Restarting the add-on after adding the key retries this
-        # same check.
-        echo "[homelab-git-management] WARNING: cannot reach GitHub yet."
-        echo "[homelab-git-management] Make sure the public key shown in the web UI was added as a Deploy Key on ${GITHUB_REPOSITORY_OPTION}, then restart this add-on."
+    echo "[homelab-git-management] GitHub read access: OK"
 
-    else
+    local repository_dir="${DATA_DIR}/repository"
 
-        echo "[homelab-git-management] GitHub read access: OK"
+    if [ -L "$repository_dir" ]; then
+        bashio::exit.nok "repository clone path must not be a symlink"
+    fi
 
-        GIT_REPOSITORY_DIR="${DATA_DIR}/repository"
+    if [ ! -e "$repository_dir" ]; then
 
-        if [ -L "$GIT_REPOSITORY_DIR" ]; then
-            bashio::exit.nok "repository clone path must not be a symlink"
+        local clone_tmp="${DATA_DIR}/.repository-clone.$$"
+
+        if [ -e "$clone_tmp" ]; then
+            echo "[homelab-git-management] Removing a stale temporary clone directory from a previous attempt..."
+            rm -rf "$clone_tmp"
         fi
 
-        if [ ! -e "$GIT_REPOSITORY_DIR" ]; then
+        if ! GIT_SSH_COMMAND="$ssh_command" git clone \
+                --branch "$GITHUB_BRANCH" \
+                --single-branch \
+                --depth 1 \
+                "$GITHUB_REPOSITORY" \
+                "$clone_tmp"; then
 
-            GIT_CLONE_TMP="${DATA_DIR}/.repository-clone.$$"
-
-            if [ -e "$GIT_CLONE_TMP" ]; then
-                bashio::exit.nok "temporary clone path already exists"
-            fi
-
-            if ! GIT_SSH_COMMAND="$GITHUB_SSH_COMMAND" git clone \
-                    --branch "$GITHUB_BRANCH" \
-                    --single-branch \
-                    --depth 1 \
-                    "$GITHUB_REPOSITORY" \
-                    "$GIT_CLONE_TMP"; then
-
-                rm -rf "$GIT_CLONE_TMP"
-                bashio::exit.nok "Clone failed"
-
-            fi
-
-            mv "$GIT_CLONE_TMP" "$GIT_REPOSITORY_DIR"
+            rm -rf "$clone_tmp"
+            GIT_SETUP_WARNING="Cloning ${GITHUB_REPOSITORY_OPTION}@${GITHUB_BRANCH} failed. This is usually a transient network issue — restarting this add-on will retry."
+            return 1
 
         fi
 
-        if [ ! -d "${GIT_REPOSITORY_DIR}/.git" ]; then
-            bashio::exit.nok "Invalid Git repository at ${GIT_REPOSITORY_DIR}"
-        fi
+        mv "$clone_tmp" "$repository_dir"
 
-        GIT_ORIGIN="$(git -C "$GIT_REPOSITORY_DIR" remote get-url origin 2>/dev/null || true)"
+    fi
 
-        if [ "$GIT_ORIGIN" != "$GITHUB_REPOSITORY" ]; then
-            bashio::exit.nok "Unexpected Git origin (repository option changed?): ${GIT_ORIGIN}"
-        fi
+    if [ ! -d "${repository_dir}/.git" ]; then
+        GIT_SETUP_WARNING="${repository_dir} does not look like a valid Git repository. Remove it (Terminal & SSH, or the File editor add-on) and restart this add-on to re-clone."
+        return 1
+    fi
 
-        GIT_CURRENT_BRANCH="$(git -C "$GIT_REPOSITORY_DIR" branch --show-current 2>/dev/null || true)"
+    local origin
+    origin="$(git -C "$repository_dir" remote get-url origin 2>/dev/null || true)"
 
-        if [ "$GIT_CURRENT_BRANCH" != "$GITHUB_BRANCH" ]; then
-            bashio::exit.nok "Unexpected current branch: ${GIT_CURRENT_BRANCH}"
-        fi
+    if [ "$origin" != "$GITHUB_REPOSITORY" ]; then
+        GIT_SETUP_WARNING="The existing local clone points at a different repository (${origin}) than currently configured. If you changed github_repository, remove ${repository_dir} and restart this add-on to re-clone."
+        return 1
+    fi
 
-        echo "[homelab-git-management] Running the engine's initial validation..."
+    local current_branch
+    current_branch="$(git -C "$repository_dir" branch --show-current 2>/dev/null || true)"
 
-        python3 /app/gestionnaire.py
+    if [ "$current_branch" != "$GITHUB_BRANCH" ]; then
+        GIT_SETUP_WARNING="The existing local clone is on branch '${current_branch}', not the configured '${GITHUB_BRANCH}'. If you changed github_branch, remove ${repository_dir} and restart this add-on to re-clone."
+        return 1
+    fi
 
-        echo "[homelab-git-management] Engine: OK"
+    echo "[homelab-git-management] Running the engine's initial validation..."
 
+    if ! python3 /app/gestionnaire.py; then
+        GIT_SETUP_WARNING="The engine's initial validation failed — check the log above for the exact mapping and reason."
+        return 1
+    fi
+
+    echo "[homelab-git-management] Engine: OK"
+}
+
+GIT_SETUP_WARNING=""
+
+if [ "$REPOSITORY_CONFIGURED" = true ]; then
+
+    if ! configure_repository; then
+        echo "[homelab-git-management] WARNING: ${GIT_SETUP_WARNING}"
     fi
 
 else
@@ -337,6 +359,8 @@ else
     echo "[homelab-git-management] Skipping Git setup: waiting for configuration."
 
 fi
+
+export GIT_SETUP_WARNING
 
 ###############################################################################
 # INGRESS INTERFACE
