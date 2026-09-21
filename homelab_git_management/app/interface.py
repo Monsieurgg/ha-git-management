@@ -206,6 +206,14 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
 .diff-add { background: var(--ok-bg); color: var(--ok); display: block; }
 .diff-remove { background: var(--danger-bg); color: var(--danger); display: block; }
 .diff-hunk { color: var(--info); display: block; }
+.plan-line { padding: 2px 6px; border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px; margin-bottom: 2px; }
+.plan-add { background: var(--ok-bg); color: var(--ok); }
+.plan-update { background: var(--warn-bg); color: var(--warn); }
+.plan-delete { background: var(--danger-bg); color: var(--danger); }
+.plan-section-title { font-weight: 600; margin: 10px 0 6px; font-size: 12px; text-transform: uppercase;
+  color: var(--muted); }
+.plan-section-title:first-child { margin-top: 0; }
 .conflict-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
 .backup-row { display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px; }
@@ -465,7 +473,7 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
     <div class="modal-body">
       <div id="conflict-error" class="error"></div>
       <p id="conflict-explain" class="field-row"></p>
-      <div class="conflict-dates">
+      <div id="conflict-dates-row" class="conflict-dates">
         <div><span class="label" data-i18n="conflict_ha_date">Home Assistant, last modified</span><span id="conflict-ha-date">—</span></div>
         <div><span class="label" data-i18n="conflict_git_date">Git, last commit</span><span id="conflict-git-date">—</span></div>
       </div>
@@ -562,6 +570,9 @@ const STRINGS = {
     conflict_diff_too_large: "This file is too large to preview here.",
     conflict_diff_error: "Could not load the difference: ",
     conflict_diff_none: "No textual difference to show.",
+    plan_add: "+ ADD", plan_update: "~ UPDATE", plan_delete: "− DELETE",
+    plan_section_git_to_ha: "Git → Home Assistant (Deploy)",
+    plan_section_ha_to_git: "Home Assistant → Git (Push)",
     setup_title: "First-time setup",
     setup_step1: "Copy the public key below.",
     setup_step2: "On GitHub, open this repository's own Settings -> Deploy keys -> Add deploy key (not your personal account settings).",
@@ -665,6 +676,9 @@ const STRINGS = {
     conflict_diff_too_large: "Ce fichier est trop volumineux pour être prévisualisé ici.",
     conflict_diff_error: "Impossible de charger la différence : ",
     conflict_diff_none: "Aucune différence textuelle à afficher.",
+    plan_add: "+ AJOUT", plan_update: "~ MODIF.", plan_delete: "− SUPPR.",
+    plan_section_git_to_ha: "Git → Home Assistant (Déployer)",
+    plan_section_ha_to_git: "Home Assistant → Git (Pousser)",
     setup_title: "Configuration initiale",
     setup_step1: "Copiez la clé publique ci-dessous.",
     setup_step2: "Sur GitHub, ouvrez les Settings DU DÉPÔT lui-même -> Deploy keys -> Add deploy key (pas les paramètres de votre compte personnel).",
@@ -1482,7 +1496,15 @@ async function actualiserGit() {
   }
 }
 
-async function deployerElement(cible, bouton) {
+async function deployerElement(cible, bouton, depuisApercu = false) {
+  if (!depuisApercu) {
+    const fichier = mappingsActuels.find((mapping) => mapping.id === cible);
+    if (fichier && fichier.kind === "directory") {
+      ouvrirConflitModal(fichier);
+      return;
+    }
+  }
+
   if (!window.confirm(t("confirm_deploy").replace("{target}", cible))) return;
 
   const erreur = el("error");
@@ -1507,7 +1529,15 @@ async function deployerElement(cible, bouton) {
   }
 }
 
-async function pousserElement(cible, bouton) {
+async function pousserElement(cible, bouton, depuisApercu = false) {
+  if (!depuisApercu) {
+    const fichier = mappingsActuels.find((mapping) => mapping.id === cible);
+    if (fichier && fichier.kind === "directory") {
+      ouvrirConflitModal(fichier);
+      return;
+    }
+  }
+
   if (!window.confirm(t("confirm_push").replace("{target}", cible))) return;
 
   const erreur = el("error");
@@ -1570,6 +1600,85 @@ function construireLigneDiff(ligne) {
   return span;
 }
 
+async function chargerPlanRepertoire(cible, sens) {
+  const reponse = await fetch(
+    `${cheminBaseIngress()}api/directory-plan?target=${encodeURIComponent(cible)}&sens=${sens}`,
+    { cache: "no-store" }
+  );
+  const donnees = await reponse.json();
+  if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
+  return donnees.plan;
+}
+
+function construireLignePlan(entree) {
+  const div = document.createElement("div");
+  const libelleAction =
+    entree.action === "add" ? t("plan_add")
+    : entree.action === "update" ? t("plan_update")
+    : t("plan_delete");
+  div.className = `plan-line plan-${entree.action}`;
+  div.textContent = `${libelleAction}  ${entree.relatif}`;
+  return div;
+}
+
+function construirePlanListe(plan) {
+  const conteneur = document.createElement("div");
+
+  if (plan.length === 0) {
+    conteneur.textContent = t("conflict_diff_none");
+    return conteneur;
+  }
+
+  for (const entree of plan) {
+    conteneur.appendChild(construireLignePlan(entree));
+  }
+
+  return conteneur;
+}
+
+function construireSectionPlan(titre, plan) {
+  const section = document.createElement("div");
+  const titreEl = document.createElement("div");
+  titreEl.className = "plan-section-title";
+  titreEl.textContent = titre;
+  section.appendChild(titreEl);
+  section.appendChild(construirePlanListe(plan));
+  return section;
+}
+
+// Directories skip the two-column text diff entirely (it does not make
+// sense for a whole tree) and show the exact add/update/delete plan
+// planifier_repertoire() will apply instead — the same plan the action
+// itself recomputes fresh right before running, never a stale preview.
+// Only a bidirectional mapping being force-resolved ("conflict"/"manual"
+// mode) ever has two directions genuinely on the table, so that is the
+// only case showing both plans; a plain one-direction mapping (git_to_ha
+// or ha_to_git only) always shows just its own direction's plan, "conflict"/
+// "external" acknowledge-only mode included — there is no other
+// direction it could ever act on.
+async function chargerApercuRepertoire(fichier, diffEl, erreur) {
+  try {
+    if (fichier.direction === "bidirectional" && conflictModeCourant !== "preview") {
+      const [planGit, planHa] = await Promise.all([
+        chargerPlanRepertoire(fichier.id, "git_to_ha"),
+        chargerPlanRepertoire(fichier.id, "ha_to_git"),
+      ]);
+      diffEl.replaceChildren();
+      diffEl.appendChild(construireSectionPlan(t("plan_section_git_to_ha"), planGit));
+      diffEl.appendChild(construireSectionPlan(t("plan_section_ha_to_git"), planHa));
+    } else {
+      const sens = fichier.direction === "git_to_ha" ? "git_to_ha" : "ha_to_git";
+      const plan = await chargerPlanRepertoire(fichier.id, sens);
+      diffEl.replaceChildren();
+      diffEl.appendChild(construirePlanListe(plan));
+    }
+  } catch (exception) {
+    diffEl.textContent = "";
+    erreur.textContent = t("conflict_diff_error") + exception.message;
+    erreur.style.display = "block";
+  }
+}
+
 async function ouvrirConflitModal(fichier) {
   conflictCibleCourante = fichier.id;
   conflictDirectionCourante = fichier.direction;
@@ -1600,12 +1709,18 @@ async function ouvrirConflitModal(fichier) {
 
   el("conflict-ha-date").textContent = "…";
   el("conflict-git-date").textContent = "…";
+  el("conflict-dates-row").hidden = fichier.kind === "directory";
 
   const diffEl = el("conflict-diff");
   diffEl.replaceChildren();
   diffEl.textContent = t("conflict_diff_loading");
 
   el("conflict-modal").hidden = false;
+
+  if (fichier.kind === "directory") {
+    await chargerApercuRepertoire(fichier, diffEl, erreur);
+    return;
+  }
 
   try {
     const reponse = await fetch(
@@ -1718,9 +1833,9 @@ function resoudrePreviewAction() {
   const direction = conflictDirectionCourante;
   fermerConflitModal();
   if (direction === "git_to_ha") {
-    deployerElement(cible, null);
+    deployerElement(cible, null, true);
   } else {
-    pousserElement(cible, null);
+    pousserElement(cible, null, true);
   }
 }
 
@@ -2333,6 +2448,39 @@ def gerer_diff(handler: "InterfaceHandler") -> None:
     ))
 
     handler.repondre_json(200, reponse)
+
+
+def gerer_plan_repertoire(handler: "InterfaceHandler") -> None:
+    """The directory-kind counterpart of gerer_diff(): instead of a
+    two-column text diff (which does not make sense for a whole tree),
+    returns the add/update/delete plan a directory Deploy, Push, or
+    bidirectional force would apply — read-only, nothing here ever
+    writes anything. `sens` picks which direction's plan: 'git_to_ha'
+    (what Deploy, or the Git -> HA side of a conflict resolution, would
+    do) or 'ha_to_git' (Push, or the other side)."""
+
+    requete = urllib.parse.urlsplit(handler.path)
+    parametres = urllib.parse.parse_qs(requete.query)
+    cible = (parametres.get("target") or [""])[0]
+    sens = (parametres.get("sens") or [""])[0]
+
+    if not cible:
+        handler.repondre_json(400, {"ok": False, "error": "missing target"})
+        return
+
+    module, erreur_chargement = charger_gestionnaire()
+
+    if module is None:
+        handler.repondre_json(503, {"ok": False, "error": erreur_chargement})
+        return
+
+    try:
+        plan = module.obtenir_plan_repertoire(cible, sens)
+    except ValueError as exc:
+        handler.repondre_json(400, {"ok": False, "error": str(exc)})
+        return
+
+    handler.repondre_json(200, {"ok": True, "plan": plan})
 
 
 ###############################################################################
@@ -3446,7 +3594,6 @@ def construire_etat() -> dict:
 
             deployable_now = (
                 not protege
-                and kind != "directory"
                 and etat in {"different", "missing_ha"}
             )
 
@@ -3454,8 +3601,7 @@ def construire_etat() -> dict:
 
             sync_status = gestionnaire.etats_synchro.get(element_id, "clean")
             pushable_now = (
-                kind != "directory"
-                and sync_status == "clean"
+                sync_status == "clean"
                 and etat in {"different", "missing_git"}
             )
 
@@ -3464,13 +3610,11 @@ def construire_etat() -> dict:
             sync_status = gestionnaire.etats_synchro.get(element_id, "conflict")
             deployable_now = (
                 not protege
-                and kind != "directory"
                 and sync_status == "git_ahead"
                 and etat in {"different", "missing_ha"}
             )
             pushable_now = (
-                kind != "directory"
-                and sync_status == "ha_ahead"
+                sync_status == "ha_ahead"
                 and etat in {"different", "missing_git"}
             )
 
@@ -3481,8 +3625,7 @@ def construire_etat() -> dict:
         )
 
         manually_resolvable_now = (
-            kind != "directory"
-            and direction == "bidirectional"
+            direction == "bidirectional"
             and etat in {"different", "missing_ha", "missing_git"}
             and sync_status != "conflict"
         )
@@ -3537,7 +3680,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/2.3.0"
+    server_version = "HomelabGitManagement/2.4.0"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 
@@ -3607,6 +3750,10 @@ class InterfaceHandler(BaseHTTPRequestHandler):
 
         if chemin.endswith("/api/diff"):
             gerer_diff(self)
+            return
+
+        if chemin.endswith("/api/directory-plan"):
+            gerer_plan_repertoire(self)
             return
 
         if chemin.endswith("/api/backups"):

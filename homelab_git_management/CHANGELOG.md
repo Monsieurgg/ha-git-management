@@ -2,7 +2,44 @@
 
 All notable changes to this add-on are documented here.
 
-## 2.3.0 — bulk mappings export/import (Excel)
+## 2.4.0 — directory mappings can now actually sync
+
+- New: a "Directory" mapping can now be deployed, pushed, and — for a
+  `bidirectional` mapping — force-resolved, exactly like a file mapping.
+  Until now a directory mapping was comparison-only: it could tell you
+  a whole folder had drifted, but Deploy and Push both refused to do
+  anything about it, and a `bidirectional` directory that ever went
+  "different" showed a permanent, unresolvable CONFLICT badge — there
+  was no way to actually fix it short of mapping every file inside it
+  individually.
+- Deploying or pushing a directory mirrors it exactly: every file the
+  source side has that the destination doesn't is added, every file
+  that differs is updated, and every file the destination has that the
+  source no longer does is **deleted**. Before any of that runs, the
+  exact plan — every file, labeled add/update/delete — is shown for
+  review; nothing is applied until it's explicitly confirmed. Each
+  change is backed up individually before being applied on the Home
+  Assistant side (recovering one specific file from that backup batch
+  today means finding it directly under
+  `/data/deploy-backups/<mapping id>/`, since there is no "restore a
+  directory's last backup" button yet — the per-file restore button
+  still only appears for file mappings). Pushing to Git applies the
+  whole batch as one commit, using the exact same atomic
+  write-then-push-then-roll-back-on-failure machinery a single-file
+  push already used.
+- **Fixed:** a `bidirectional` directory mapping's own two-way conflict
+  tracking was silently broken — comparing a directory's content
+  against its last-known-synced reference crashed internally the
+  moment it went "different", and that failure was swallowed, always
+  defaulting to the least specific, permanently-blocking answer:
+  CONFLICT, with no "only one side actually changed" auto-detection
+  ever kicking in, even when true. Directory mappings now get the exact
+  same reference-based tracking a file mapping always had (a whole-tree
+  fingerprint standing in for a single file's content hash), so a
+  directory correctly shows "safe to Deploy" or "safe to Push" instead
+  of a forced conflict whenever only one side actually changed, and a
+  genuine conflict remains force-resolvable — this is also what makes
+  the deploy/push support above possible in the first place.
 
 - New: "Export mappings (Excel)" and "Import mappings (Excel)" buttons
   next to "+ Add a mapping". Export downloads the current mappings list

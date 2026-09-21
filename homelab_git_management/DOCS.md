@@ -43,7 +43,7 @@ Each entry under `mappings`:
 | Field | Type | Description |
 |---|---|---|
 | `id` | string | Unique, `[A-Za-z0-9_-]+` only. Used as the deploy target internally and in the API. |
-| `kind` | `file` \| `directory` | Defaults to `file`. Directories can be compared but not deployed. |
+| `kind` | `file` \| `directory` | Defaults to `file`. A directory is compared, deployed, pushed, and force-resolved exactly like a file — see [Directory mappings](#directory-mappings). |
 | `ha_path` | string | Absolute path under `/config`. |
 | `git_path` | string | Path relative to the repository root. |
 | `direction` | `git_to_ha` \| `ha_to_git` \| `bidirectional` | All three are implemented. |
@@ -348,6 +348,59 @@ Assistant's own state.
   exist on one or both sides.
 - **error** — the path could not be checked (permissions, symlink, path
   escaping its root, etc.). Always treated as blocking.
+
+## Directory mappings
+
+A mapping with `kind: directory` behaves exactly like a file mapping —
+compared, deployed, pushed, and (for `bidirectional`) force-resolved the
+same way — except every action works on the whole tree at once instead
+of one file:
+
+- **Comparison** treats the two sides as **identical** only if every
+  file in both trees matches exactly, **equivalent** if every file
+  matches once formatting differences are normalized away, and
+  **different** the moment any file differs, is missing on one side, or
+  exists only on one side. Symlinks anywhere in either tree, and the
+  same runtime artifacts a file mapping already ignores (`__pycache__`,
+  `.pyc`), are excluded from the comparison — a symlink inside a
+  compared directory makes the whole comparison an error instead.
+- **Deploying or pushing a directory mirrors it exactly**: every file
+  present on the source side but not the destination is added, every
+  file that differs is updated, and every file the destination has that
+  the source no longer does is **deleted**. Before anything is applied,
+  the exact plan is shown — every file, labeled add/update/delete — for
+  review; nothing runs until that plan is explicitly confirmed. This is
+  the same "⋮ → Deploy/Push" or the row's own Deploy/Push button as a
+  file mapping, just showing a plan instead of a single-file diff.
+- Each file added, updated, or deleted on the Home Assistant side during
+  a directory deploy is backed up individually first, exactly like a
+  single-file deploy — but there is no "restore a directory's last
+  backup" button yet (the per-mapping backup-restore action still only
+  appears for file mappings). Recovering one specific file from a
+  directory deploy's backups today means finding it directly under
+  `/data/deploy-backups/<mapping id>/` (via the **Terminal & SSH** or
+  **File editor** add-on) — every backup in there is named with the
+  timestamp it was taken and the file's own name.
+- A directory push applies its whole plan as **one commit**, using the
+  same atomic write-then-push-then-roll-back-on-failure machinery a
+  single-file push already uses — either the entire batch becomes one
+  commit and gets pushed, or none of it does; there is no partially-
+  pushed state to reason about.
+- A `bidirectional` directory tracks conflicts exactly like a file
+  mapping: a fingerprint of its whole tree stands in for a single file's
+  content hash, so it correctly shows "safe to Deploy" or "safe to Push"
+  (not a forced CONFLICT) whenever only one side actually changed since
+  the last sync, and a genuine two-sided change still shows CONFLICT,
+  force-resolvable from the "Resolve" button exactly like a file — the
+  modal shows both directions' plans side by side instead of a diff, so
+  the effect of either "Force Git → HA" or "Force HA → Git" is fully
+  visible before choosing one.
+- `protect_from_git` applies to a directory mapping exactly as it does
+  to a file: `true` blocks that whole directory from ever being deployed
+  to (Git → Home Assistant).
+- Not carried over from file mappings: the "⋮ → Make identical" action
+  (formatting-only normalization) and the single-file diff preview don't
+  apply to a whole tree, so neither is offered for a directory mapping.
 
 ## Protected files
 

@@ -875,6 +875,42 @@ def classer_repertoire(element_id: str, chemin_ha: Path, chemin_git: Path) -> st
     return "equivalent" if au_moins_un_equivalent else "identical"
 
 
+def planifier_repertoire(chemin_source: Path, chemin_dest: Path) -> list[dict]:
+    """Computes the add/update/delete plan to make `chemin_dest` mirror
+    `chemin_source` exactly: a file present in the source but not the
+    destination is "add", present in both with different content
+    (formatting-only "equivalent" counts as different here — mirroring
+    means byte-for-byte, not just close enough) is "update", and present
+    in the destination but not the source is "delete". Symlinks and
+    runtime artifacts are excluded from both sides exactly as they are
+    from directory comparison (inventorier_repertoire()).
+
+    Used both to preview a directory deploy/push before it runs and to
+    actually drive one (deployer_repertoire(), pousser_repertoire()) —
+    always computed fresh, immediately before use in both cases, so a
+    preview and the action it describes can never silently drift apart
+    from something changing on either side in between."""
+
+    inventaire_source, _ = inventorier_repertoire(chemin_source) if chemin_source.exists() else ({}, [])
+    inventaire_dest, _ = inventorier_repertoire(chemin_dest) if chemin_dest.exists() else ({}, [])
+
+    plan = []
+
+    for relatif in sorted(set(inventaire_source) | set(inventaire_dest)):
+
+        dans_source = relatif in inventaire_source
+        dans_dest = relatif in inventaire_dest
+
+        if dans_source and not dans_dest:
+            plan.append({"relatif": relatif, "action": "add"})
+        elif dans_dest and not dans_source:
+            plan.append({"relatif": relatif, "action": "delete"})
+        elif classer_fichier(inventaire_dest[relatif], inventaire_source[relatif]) != "identical":
+            plan.append({"relatif": relatif, "action": "update"})
+
+    return plan
+
+
 ###############################################################################
 # GLOBAL COMPARISON
 #
@@ -1085,6 +1121,25 @@ def empreinte(contenu: bytes) -> str:
     return hashlib.sha256(contenu).hexdigest()
 
 
+def empreinte_repertoire(chemin: Path) -> str:
+    """The directory-kind equivalent of empreinte(): a single fingerprint
+    covering every file's relative path AND content anywhere under
+    `chemin`, stable across two separately-computed trees whose content
+    genuinely matches (same relative paths, same bytes at each one) —
+    used to give a directory mapping the exact same reference-based
+    conflict tracking a single file already gets (see the
+    SYNCHRONIZATION STATE section), instead of the two sides being
+    silently skipped (and defaulting to a permanent, unresolvable
+    "conflict") the moment a directory mapping ever went bidirectional
+    and "different"."""
+
+    inventaire, _ = inventorier_repertoire(chemin)
+
+    lignes = [f"{relatif}:{empreinte(inventaire[relatif].read_bytes())}" for relatif in sorted(inventaire)]
+
+    return empreinte("\n".join(lignes).encode("utf-8"))
+
+
 def enregistrer_synchronise(element_id: str, empreinte_ha: str, empreinte_git: str) -> None:
     """Marks `element_id`'s two sides as agreeing right now — called after
     a successful push, and after a comparison finds them already
@@ -1100,13 +1155,16 @@ def enregistrer_synchronise(element_id: str, empreinte_ha: str, empreinte_git: s
 
 
 def evaluer_synchro_bidirectionnel(
-    element_id: str, contenu_ha: bytes | None, contenu_git: bytes | None
+    element_id: str, empreinte_ha: str | None, empreinte_git: str | None
 ) -> str:
     """Same reference-based comparison as evaluer_synchro_ha_to_git(), but
     for a mapping where either side may legitimately be the one that
     moved — so, unlike ha_to_git, a Git-only change is not suspicious by
     itself, it just means the other direction (git_to_ha) is the safe one
-    right now. Returns one of:
+    right now. Takes each side's fingerprint directly rather than raw
+    content, so the same reference-based logic applies unchanged whether
+    a mapping is a single file (empreinte() of its bytes) or a directory
+    (empreinte_repertoire() of its whole tree). Returns one of:
       - "ha_ahead"  — only Home Assistant changed: Push is safe.
       - "git_ahead" — only Git changed: Deploy is safe.
       - "conflict"  — both changed (or there is no prior record at all,
@@ -1122,9 +1180,6 @@ def evaluer_synchro_bidirectionnel(
 
     if reference is None:
         return "conflict"
-
-    empreinte_ha = empreinte(contenu_ha) if contenu_ha is not None else None
-    empreinte_git = empreinte(contenu_git) if contenu_git is not None else None
 
     ha_a_change = empreinte_ha != reference.get("ha")
     git_a_change = empreinte_git != reference.get("git")
@@ -1142,7 +1197,7 @@ def evaluer_synchro_bidirectionnel(
 
 
 def evaluer_synchro_ha_to_git(
-    element_id: str, contenu_ha: bytes | None, contenu_git: bytes | None
+    element_id: str, empreinte_ha: str | None, empreinte_git: str | None
 ) -> str:
     """Returns one of:
       - "clean"    — safe to push Home Assistant -> Git (only Home
@@ -1153,15 +1208,16 @@ def evaluer_synchro_ha_to_git(
                      likely edited directly on GitHub); pushing now would
                      silently discard that edit.
       - "conflict" — both sides changed independently since the last
-                     agreement; a real conflict, needs a human decision."""
+                     agreement; a real conflict, needs a human decision.
+
+    Takes each side's fingerprint directly (see
+    evaluer_synchro_bidirectionnel() for why: a single reference-based
+    implementation, shared by files and directories alike)."""
 
     reference = lire_etat_synchro().get(element_id)
 
     if reference is None:
         return "clean"
-
-    empreinte_ha = empreinte(contenu_ha) if contenu_ha is not None else None
-    empreinte_git = empreinte(contenu_git) if contenu_git is not None else None
 
     ha_a_change = empreinte_ha != reference.get("ha")
     git_a_change = empreinte_git != reference.get("git")
@@ -1183,6 +1239,7 @@ for element in elements:
         continue
 
     element_id = element["id"]
+    kind = element["kind"]
     etat_comparaison = resultats_comparaison.get(element_id)
 
     if etat_comparaison not in {"identical", "equivalent", "different"}:
@@ -1194,33 +1251,41 @@ for element in elements:
     try:
         chemin_ha = convertir_chemin_ha(element["ha_path"])
         chemin_git = convertir_chemin_git(element["git_path"])
-        contenu_ha = lire_octets(chemin_ha) if chemin_ha.exists() else None
-        contenu_git = lire_octets(chemin_git) if chemin_git.exists() else None
+
+        if kind == "directory":
+            empreinte_ha_actuelle = empreinte_repertoire(chemin_ha) if chemin_ha.exists() else None
+            empreinte_git_actuelle = empreinte_repertoire(chemin_git) if chemin_git.exists() else None
+        else:
+            contenu_ha = lire_octets(chemin_ha) if chemin_ha.exists() else None
+            contenu_git = lire_octets(chemin_git) if chemin_git.exists() else None
+            empreinte_ha_actuelle = empreinte(contenu_ha) if contenu_ha is not None else None
+            empreinte_git_actuelle = empreinte(contenu_git) if contenu_git is not None else None
+
     except Exception as exc:
         log(f"[SYNC] {element_id}: could not read content for sync evaluation: {exc}")
         continue
 
     if etat_comparaison in {"identical", "equivalent"}:
 
-        if contenu_ha is not None and contenu_git is not None:
+        if empreinte_ha_actuelle is not None and empreinte_git_actuelle is not None:
 
             reference = lire_etat_synchro().get(element_id)
-            nouvelle_ha = empreinte(contenu_ha)
-            nouvelle_git = empreinte(contenu_git)
 
             if (
                 reference is None
-                or reference.get("ha") != nouvelle_ha
-                or reference.get("git") != nouvelle_git
+                or reference.get("ha") != empreinte_ha_actuelle
+                or reference.get("git") != empreinte_git_actuelle
             ):
-                enregistrer_synchronise(element_id, nouvelle_ha, nouvelle_git)
+                enregistrer_synchronise(element_id, empreinte_ha_actuelle, empreinte_git_actuelle)
 
         etats_synchro[element_id] = "clean"
         continue
 
     if element["direction"] == "ha_to_git":
 
-        etats_synchro[element_id] = evaluer_synchro_ha_to_git(element_id, contenu_ha, contenu_git)
+        etats_synchro[element_id] = evaluer_synchro_ha_to_git(
+            element_id, empreinte_ha_actuelle, empreinte_git_actuelle
+        )
 
         if etats_synchro[element_id] == "conflict":
             log(f"[SYNC] {element_id}: CONFLICT - both Home Assistant and Git changed since the last sync")
@@ -1229,7 +1294,9 @@ for element in elements:
 
     else:  # bidirectional
 
-        etats_synchro[element_id] = evaluer_synchro_bidirectionnel(element_id, contenu_ha, contenu_git)
+        etats_synchro[element_id] = evaluer_synchro_bidirectionnel(
+            element_id, empreinte_ha_actuelle, empreinte_git_actuelle
+        )
 
         if etats_synchro[element_id] == "conflict":
             log(f"[SYNC] {element_id}: CONFLICT - both Home Assistant and Git changed since the last sync")
@@ -1575,6 +1642,131 @@ def deployer_fichier(element: dict, etat: str) -> None:
     log(f"[DEPLOY] {element_id}: SUCCESS")
 
 
+def deployer_repertoire(element: dict, etat: str) -> None:
+    """The directory-kind counterpart of deployer_fichier(): mirrors the
+    Git-side directory onto the Home Assistant side exactly (see
+    planifier_repertoire()) — every file added or updated, every file
+    Home Assistant has that Git no longer does removed. Each individual
+    change is backed up before being applied, exactly like a single-file
+    deploy (creer_sauvegarde()); there is just no single "restore this
+    mapping's last backup" button for a directory yet (see
+    restaurer_sauvegarde_locale()'s own guard) — recovering one specific
+    file from these backups today means finding it directly under
+    /data/deploy-backups/<mapping id>/ (Terminal & SSH, or the File
+    editor add-on).
+
+    Applies changes in a fixed, deterministic order (see
+    planifier_repertoire()) and stops at the first failure, leaving
+    every already-applied change in place rather than attempting any
+    kind of multi-file undo: each one was independently backed up and
+    verified as it was applied, and the plan is naturally idempotent to
+    re-run — a repeat only ever finds the remaining, not-yet-applied
+    part of the same plan."""
+
+    element_id = element["id"]
+
+    chemin_ha = convertir_chemin_ha(element["ha_path"])
+    chemin_git = convertir_chemin_git(element["git_path"])
+
+    if est_chemin_protege(element, chemin_ha):
+        raise RuntimeError(
+            "this mapping is protected against Git -> HA deployment "
+            "(uncheck \"Protect this file\" on the mapping to allow it)"
+        )
+
+    verifier_chemin_resolu(chemin_ha, HA_ROOT, "/homeassistant")
+    verifier_chemin_resolu(chemin_git, GIT_ROOT, "/data/repository")
+
+    if chemin_git.is_symlink():
+        raise RuntimeError("Git source must not be a symlink")
+
+    if not chemin_git.exists() or not chemin_git.is_dir():
+        raise RuntimeError("Git source missing or not a directory")
+
+    if chemin_ha.is_symlink():
+        raise RuntimeError("Home Assistant target must not be a symlink")
+
+    if chemin_ha.exists() and not chemin_ha.is_dir():
+        raise RuntimeError("existing Home Assistant target is not a directory")
+
+    if etat not in {"different", "missing_ha"}:
+        raise RuntimeError(f"state not deployable: {etat}")
+
+    chemin_ha.mkdir(parents=True, exist_ok=True)
+
+    plan = planifier_repertoire(chemin_git, chemin_ha)
+
+    if not plan:
+        raise RuntimeError("nothing to deploy (Home Assistant already matches Git)")
+
+    log(f"[DEPLOY] {element_id}: directory mirror starting ({len(plan)} change(s))")
+
+    appliques = 0
+
+    for entree in plan:
+
+        relatif = entree["relatif"]
+        action = entree["action"]
+        cible = chemin_ha / relatif
+        source = chemin_git / relatif
+
+        try:
+
+            verifier_chemin_resolu(cible, HA_ROOT, "/homeassistant")
+
+            if action == "delete":
+
+                if cible.is_symlink():
+                    raise RuntimeError("refusing to delete a symlink")
+
+                if cible.exists():
+                    creer_sauvegarde(element_id, cible)
+                    cible.unlink()
+
+            else:  # add / update
+
+                if source.is_symlink():
+                    raise RuntimeError("Git source must not be a symlink")
+
+                contenu_source = source.read_bytes()
+
+                verifier_syntaxe_yaml(cible, contenu_source)
+
+                if cible.exists():
+
+                    if cible.is_symlink():
+                        raise RuntimeError("Home Assistant target must not be a symlink")
+
+                    creer_sauvegarde(element_id, cible)
+                    mode_destination = stat.S_IMODE(cible.stat().st_mode)
+
+                else:
+
+                    cible.parent.mkdir(parents=True, exist_ok=True)
+                    mode_destination = stat.S_IMODE(source.stat().st_mode) or 0o644
+
+                ecrire_atomiquement(cible, contenu_source, mode_destination)
+
+                if cible.read_bytes() != contenu_source:
+                    raise RuntimeError("post-copy verification failed")
+
+            appliques += 1
+            log(f"[DEPLOY] {element_id}: {action} {relatif}: OK")
+
+        except Exception as exc:
+
+            log(f"[DEPLOY] {element_id}: {action} {relatif}: FAILED: {exc}")
+
+            raise RuntimeError(
+                f"directory deployment stopped after {appliques}/{len(plan)} change(s) "
+                f"applied — {relatif}: {exc}. Already-applied changes were left in "
+                "place (each individually backed up); re-running the deploy will "
+                "pick up exactly what's left."
+            ) from exc
+
+    log(f"[DEPLOY] {element_id}: directory mirror SUCCESS ({len(plan)} change(s))")
+
+
 ###############################################################################
 # DEPLOYMENT TO GIT (ha_to_git)
 #
@@ -1877,6 +2069,203 @@ def deployer_vers_git(element: dict, etat_synchro: str) -> None:
     )
 
 
+def pousser_repertoire(element: dict, etat_synchro: str) -> None:
+    """The directory-kind counterpart of deployer_vers_git(): mirrors the
+    Home Assistant-side directory onto the Git side exactly (see
+    planifier_repertoire()), as ONE commit covering every add/update/
+    delete, then ONE push — the same atomic-write-then-push-then-
+    rollback-on-failure shape as a single-file push
+    (_ecrire_commit_pousser_git()), just staging every changed path in
+    one commit instead of one path. A failure at any point — a bad
+    write, a rejected push — resets the working tree back to the commit
+    this started from (git reset --hard, plus git clean for anything
+    added but never committed), so a failed directory push never leaves
+    uncommitted local changes behind (which the next refresh would
+    otherwise refuse to touch, being unable to fast-forward past them).
+
+    Unlike a directory *deploy* (deployer_repertoire(), no Git history
+    to fall back on if it stops partway through), there is no partial
+    state to reason about here: either the whole batch becomes one
+    commit and gets pushed, or none of it does."""
+
+    element_id = element["id"]
+
+    if element["direction"] not in {"ha_to_git", "bidirectional"}:
+        raise RuntimeError("this mapping cannot push to Git")
+
+    if not SSH_PRIVATE_KEY_WRITE.is_file():
+        raise RuntimeError(
+            "no write-capable Deploy Key configured yet — add the second "
+            "public key shown in the setup screen to GitHub, with write "
+            "access enabled this time"
+        )
+
+    if etat_synchro == "conflict":
+        raise RuntimeError(
+            "push blocked: both Home Assistant and Git changed since the "
+            "last sync — resolve the conflict first"
+        )
+
+    if etat_synchro == "external":
+        raise RuntimeError(
+            "push blocked: the Git side changed outside this add-on since "
+            "the last sync — acknowledge it first"
+        )
+
+    chemin_ha = convertir_chemin_ha(element["ha_path"])
+    chemin_git = convertir_chemin_git(element["git_path"])
+
+    verifier_chemin_resolu(chemin_ha, HA_ROOT, "/homeassistant")
+    verifier_chemin_resolu(chemin_git, GIT_ROOT, "/data/repository")
+
+    if chemin_ha.is_symlink():
+        raise RuntimeError("Home Assistant source must not be a symlink")
+
+    if not chemin_ha.exists() or not chemin_ha.is_dir():
+        raise RuntimeError("Home Assistant source missing or not a directory")
+
+    if chemin_git.is_symlink():
+        raise RuntimeError("Git target must not be a symlink")
+
+    if chemin_git.exists() and not chemin_git.is_dir():
+        raise RuntimeError("existing Git target is not a directory")
+
+    chemin_git.mkdir(parents=True, exist_ok=True)
+
+    plan = planifier_repertoire(chemin_ha, chemin_git)
+
+    if not plan:
+        raise RuntimeError("nothing to push (Git already matches Home Assistant)")
+
+    nettoyer_verrou_residuel()
+
+    tete_avant = executer_git_local("rev-parse", "HEAD").stdout.strip()
+    chemin_git_relatif = chemin_git.relative_to(GIT_ROOT).as_posix()
+
+    log(f"[PUSH] {element_id}: directory mirror starting ({len(plan)} change(s))")
+
+    try:
+
+        for entree in plan:
+
+            relatif = entree["relatif"]
+            action = entree["action"]
+            cible = chemin_git / relatif
+            source = chemin_ha / relatif
+
+            verifier_chemin_resolu(cible, GIT_ROOT, "/data/repository")
+
+            if action == "delete":
+
+                if cible.is_symlink():
+                    raise RuntimeError(f"refusing to delete a symlink: {relatif}")
+
+                cible.unlink()
+
+            else:  # add / update
+
+                if source.is_symlink():
+                    raise RuntimeError(f"Home Assistant source must not be a symlink: {relatif}")
+
+                contenu_source = source.read_bytes()
+
+                verifier_syntaxe_yaml(cible, contenu_source)
+
+                cible.parent.mkdir(parents=True, exist_ok=True)
+
+                mode_destination = (
+                    stat.S_IMODE(cible.stat().st_mode) if cible.exists()
+                    else stat.S_IMODE(source.stat().st_mode) or 0o644
+                )
+
+                ecrire_atomiquement(cible, contenu_source, mode_destination)
+
+                if cible.read_bytes() != contenu_source:
+                    raise RuntimeError(f"post-write verification failed: {relatif}")
+
+        resultat_add = executer_git_local("add", "-A", "--", chemin_git_relatif)
+
+        if resultat_add.returncode != 0:
+            raise RuntimeError(f"git add failed: {resultat_add.stderr.strip()}")
+
+        resultat_statut = executer_git_local("status", "--porcelain", "--", chemin_git_relatif)
+
+        if not resultat_statut.stdout.strip():
+            raise RuntimeError("nothing to commit (Git already matches Home Assistant)")
+
+        resume_plan = ", ".join(f"{entree['action']} {entree['relatif']}" for entree in plan[:20])
+
+        if len(plan) > 20:
+            resume_plan += ", ..."
+
+        message_commit = (
+            f"Update {chemin_git_relatif} from Home Assistant "
+            f"({len(plan)} file(s): {resume_plan})"
+        )
+
+        resultat_commit = executer_git_local(
+            "-c", f"user.name={COMMIT_AUTEUR}",
+            "-c", f"user.email={COMMIT_EMAIL}",
+            "commit", "-m", message_commit,
+        )
+
+        if resultat_commit.returncode != 0:
+            erreur_msg = resultat_commit.stderr.strip() or resultat_commit.stdout.strip()
+            raise RuntimeError(f"git commit failed: {erreur_msg}")
+
+        log(f"[PUSH] {element_id}: pushing to origin/{GIT_REPOSITORY_BRANCH}")
+
+        resultat_push = executer_git_reseau_ecriture(
+            "push", "origin", f"HEAD:{GIT_REPOSITORY_BRANCH}"
+        )
+
+        if resultat_push.returncode != 0:
+
+            log(f"[PUSH] {element_id}: push failed, discarding local commit")
+
+            resultat_reset = executer_git_local("reset", "--hard", tete_avant)
+
+            if resultat_reset.returncode != 0:
+                log(
+                    f"CRITICAL ERROR: {element_id}: push failed AND local reset "
+                    f"failed: {resultat_reset.stderr.strip()}"
+                )
+                raise RuntimeError(
+                    "push failed and the local clone could not be restored — "
+                    "manual intervention required"
+                )
+
+            raise RuntimeError(f"git push failed: {resultat_push.stderr.strip()}")
+
+        tete_apres = executer_git_local("rev-parse", "HEAD").stdout.strip()
+
+        executer_git_local(
+            "update-ref", f"refs/remotes/origin/{GIT_REPOSITORY_BRANCH}", tete_apres
+        )
+
+    except Exception as exc:
+
+        # Anything that failed *before* the commit (a bad write, a
+        # symlink, a YAML syntax error) leaves the working tree modified
+        # but never committed — reset it back to the last commit so a
+        # half-applied directory mirror never lingers as uncommitted
+        # local changes, which mettre_a_jour_clone() would otherwise
+        # refuse to touch on the very next refresh.
+        log(f"[PUSH] {element_id}: directory mirror failed, restoring the working tree: {exc}")
+        executer_git_local("reset", "--hard", tete_avant)
+        executer_git_local("clean", "-fd", "--", chemin_git_relatif)
+        raise RuntimeError(f"directory push failed: {exc}") from exc
+
+    # Both sides now hold the exact same tree — one fresh fingerprint of
+    # either side (they're identical) is the new reference for both
+    # slots, exactly like a single-file push records one hash for both
+    # "ha" and "git" once they match.
+    empreinte_finale = empreinte_repertoire(chemin_git)
+    enregistrer_synchronise(element_id, empreinte_finale, empreinte_finale)
+
+    log(f"[PUSH] {element_id}: directory mirror SUCCESS ({len(plan)} change(s), {tete_apres[:12]})")
+
+
 def normaliser_vers_git(element: dict, etat: str) -> None:
     """Forces byte-for-byte identity for a mapping currently classified
     "equivalent" (same content once a UTF-8 BOM, line endings and a
@@ -1921,6 +2310,51 @@ def normaliser_vers_git(element: dict, etat: str) -> None:
     )
 
 
+def obtenir_plan_repertoire(target: str, sens: str) -> list[dict]:
+    """Read-only: the add/update/delete plan a directory deploy (`sens`
+    "git_to_ha") or push (`sens` "ha_to_git") would apply for `target`,
+    without applying anything. Backs the dashboard's directory preview —
+    shown before Deploy, Push, or a bidirectional force ever runs on a
+    directory mapping — and is deliberately the exact same
+    planifier_repertoire() the real action recomputes fresh right before
+    running, so a preview can never silently drift from what actually
+    happens. Raises ValueError for anything that makes the request
+    itself invalid (unknown id, wrong kind, a direction that cannot go
+    that way) — never RuntimeError, and never erreur()/SystemExit: this
+    is a plain query, not a command, so the caller (interface.py) can
+    show any failure as an ordinary error message."""
+
+    elements_par_id = {element["id"]: element for element in elements}
+
+    if target not in elements_par_id:
+        raise ValueError(f"unmanaged element: {target}")
+
+    element = elements_par_id[target]
+
+    if element["kind"] != "directory":
+        raise ValueError(f"{target}: not a directory mapping")
+
+    if sens not in {"git_to_ha", "ha_to_git"}:
+        raise ValueError("sens must be 'git_to_ha' or 'ha_to_git'")
+
+    if sens == "git_to_ha" and element["direction"] not in {"git_to_ha", "bidirectional"}:
+        raise ValueError(f"{target}: this mapping cannot deploy Git -> Home Assistant")
+
+    if sens == "ha_to_git" and element["direction"] not in {"ha_to_git", "bidirectional"}:
+        raise ValueError(f"{target}: this mapping cannot push Home Assistant -> Git")
+
+    chemin_ha = convertir_chemin_ha(element["ha_path"])
+    chemin_git = convertir_chemin_git(element["git_path"])
+
+    verifier_chemin_resolu(chemin_ha, HA_ROOT, "/homeassistant")
+    verifier_chemin_resolu(chemin_git, GIT_ROOT, "/data/repository")
+
+    if sens == "git_to_ha":
+        return planifier_repertoire(chemin_git, chemin_ha)
+
+    return planifier_repertoire(chemin_ha, chemin_git)
+
+
 ###############################################################################
 # DEPLOYMENT WITH CHECKS
 #
@@ -1945,8 +2379,7 @@ def deployer_element(
     log(f"[COMMAND] deploy requested: {target}")
     log(f"[COMMAND] explicit confirmation: {confirmation}")
 
-    if element["kind"] == "directory":
-        erreur(f"{target}: directory deployment is not supported")
+    est_repertoire = element["kind"] == "directory"
 
     if element["direction"] == "git_to_ha":
 
@@ -1963,7 +2396,7 @@ def deployer_element(
             erreur(f"{target}: state not deployable: {etat}")
 
         try:
-            deployer_fichier(element, etat)
+            deployer_repertoire(element, etat) if est_repertoire else deployer_fichier(element, etat)
         except Exception as exc:
             erreur(f"{target}: {exc}")
 
@@ -1985,7 +2418,7 @@ def deployer_element(
             etat_synchro = "clean"
 
         try:
-            deployer_vers_git(element, etat_synchro)
+            pousser_repertoire(element, etat_synchro) if est_repertoire else deployer_vers_git(element, etat_synchro)
         except Exception as exc:
             erreur(f"{target}: {exc}")
 
@@ -2030,9 +2463,13 @@ def deployer_element(
                 erreur(f"{target}: state not deployable: {etat}")
 
             try:
-                deployer_fichier(element, etat)
-                contenu_final = chemin_ha.read_bytes()
-                enregistrer_synchronise(target, empreinte(contenu_final), empreinte(contenu_final))
+                if est_repertoire:
+                    deployer_repertoire(element, etat)
+                    empreinte_finale = empreinte_repertoire(chemin_ha)
+                else:
+                    deployer_fichier(element, etat)
+                    empreinte_finale = empreinte(chemin_ha.read_bytes())
+                enregistrer_synchronise(target, empreinte_finale, empreinte_finale)
             except Exception as exc:
                 erreur(f"{target}: {exc}")
 
@@ -2048,7 +2485,11 @@ def deployer_element(
             erreur(f"{target}: state not pushable: {etat}")
 
         try:
-            deployer_vers_git(element, "clean" if forcer else etat_synchro)
+            etat_synchro_effectif = "clean" if forcer else etat_synchro
+            if est_repertoire:
+                pousser_repertoire(element, etat_synchro_effectif)
+            else:
+                deployer_vers_git(element, etat_synchro_effectif)
         except Exception as exc:
             erreur(f"{target}: {exc}")
 
