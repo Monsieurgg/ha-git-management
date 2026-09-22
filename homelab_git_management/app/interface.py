@@ -155,11 +155,28 @@ button:disabled { opacity: 0.5; cursor: default; }
 .panel-body { padding: 17px; }
 .status-line { color: var(--muted); font-size: 12px; text-align: right; }
 .table-wrapper { overflow-x: auto; }
-table { width: 100%; min-width: 900px; border-collapse: collapse; }
-th, td { padding: 10px 10px; border-bottom: 1px solid var(--border); text-align: left; font-size: 13px; vertical-align: middle; }
-th { background: var(--surface-soft); color: var(--muted); font-weight: 600; }
+table { width: 100%; min-width: 640px; table-layout: fixed; border-collapse: collapse; }
+th, td { padding: 10px 10px; border-bottom: 1px solid var(--border); text-align: left; font-size: 13px;
+  vertical-align: middle; overflow: hidden; }
+th { background: var(--surface-soft); color: var(--muted); font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 tbody tr:last-child td { border-bottom: 0; }
-.checkbox-col { width: 1%; padding-right: 0; }
+tbody tr:nth-child(even) { background: rgba(15, 23, 42, 0.015); }
+tbody tr:hover { background: var(--surface-soft); }
+.checkbox-col { width: 34px; padding-right: 0; }
+.col-element { width: 16%; }
+.col-paths { width: 34%; }
+.col-direction { width: 15%; }
+.col-comparison { width: 13%; }
+.col-manage { width: 22%; }
+.element-cell { overflow-wrap: anywhere; }
+.path-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.path-line + .path-line { margin-top: 4px; }
+.path-tag { flex: 0 0 auto; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted); background: var(--surface-soft); border: 1px solid var(--border); border-radius: 4px;
+  padding: 1px 5px; line-height: 1.5; }
+.path-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; color: var(--text); }
 button.danger { border-color: var(--danger); color: var(--danger); }
 .bulk-toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 17px;
   border-bottom: 1px solid var(--border); background: var(--surface-soft); flex-wrap: wrap; }
@@ -194,6 +211,14 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
   .wrapper { padding: 12px; }
   .header { align-items: flex-start; flex-direction: column; }
   .summary { grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+@media (max-width: 860px) {
+  .col-element { width: 22%; }
+  .col-paths { width: 30%; }
+  .col-direction, .col-comparison { width: 14%; }
+  .col-manage { width: 20%; }
+  .path-tag { display: none; }
+  th, td { padding: 8px 8px; font-size: 12px; }
 }
 button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 .modal-overlay { display: flex; align-items: center; justify-content: center; position: fixed; inset: 0;
@@ -376,12 +401,19 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
       </div>
       <div class="table-wrapper">
         <table>
+          <colgroup>
+            <col class="checkbox-col">
+            <col class="col-element">
+            <col class="col-paths">
+            <col class="col-direction">
+            <col class="col-comparison">
+            <col class="col-manage">
+          </colgroup>
           <thead>
             <tr>
               <th class="checkbox-col"><input id="select-all" type="checkbox"></th>
               <th data-i18n="th_element">Element</th>
-              <th data-i18n="th_ha_path">HA path</th>
-              <th data-i18n="th_git_path">Git path</th>
+              <th data-i18n="th_paths">Paths</th>
               <th data-i18n="th_direction">Direction</th>
               <th data-i18n="th_comparison">Comparison</th>
               <th data-i18n="th_manage">Manage</th>
@@ -648,7 +680,8 @@ const STRINGS = {
     mappings_import_error_empty: "This file has no mapping rows to import.",
     mappings_import_confirm: "Import this file? {added} new mapping(s), {updated} updated — {total} total after import. Nothing is saved until you confirm.",
     mappings_import_error_save: "Import failed: ",
-    th_ha_path: "HA path", th_git_path: "Git path", th_direction: "Direction", th_manage: "Manage",
+    th_paths: "Paths", th_direction: "Direction", th_manage: "Manage",
+    path_tag_ha: "HA", path_tag_git: "Git",
     mapping_edit: "Edit", mapping_delete: "Delete", mapping_normalize: "Make identical",
     mapping_compare_force: "Compare & force a version",
     mapping_preview: "Preview the difference",
@@ -765,7 +798,8 @@ const STRINGS = {
     mappings_import_error_empty: "Ce fichier ne contient aucune ligne de mapping à importer.",
     mappings_import_confirm: "Importer ce fichier ? {added} nouveau(x) mapping(s), {updated} mis à jour — {total} au total après import. Rien n'est enregistré tant que vous ne confirmez pas.",
     mappings_import_error_save: "Échec de l'import : ",
-    th_ha_path: "Chemin HA", th_git_path: "Chemin Git", th_direction: "Direction", th_manage: "Gérer",
+    th_paths: "Chemins", th_direction: "Direction", th_manage: "Gérer",
+    path_tag_ha: "HA", path_tag_git: "Git",
     mapping_edit: "Modifier", mapping_delete: "Supprimer", mapping_normalize: "Rendre identique",
     mapping_compare_force: "Comparer et forcer une version",
     mapping_preview: "Aperçu de la différence",
@@ -999,6 +1033,24 @@ function construireMenuKebab(fichier) {
   return enveloppe;
 }
 
+function construireLigneChemin(etiquette, chemin) {
+  const ligne = document.createElement("div");
+  ligne.className = "path-line";
+
+  const tag = document.createElement("span");
+  tag.className = "path-tag";
+  tag.textContent = etiquette;
+  ligne.appendChild(tag);
+
+  const valeur = document.createElement("span");
+  valeur.className = "path-value";
+  valeur.textContent = chemin;
+  valeur.title = chemin; // full path on hover — the line itself is truncated with an ellipsis
+  ligne.appendChild(valeur);
+
+  return ligne;
+}
+
 function mettreAJourBarreSelection() {
   const nombre = mappingsSelectionnes.size;
   el("bulk-toolbar").hidden = nombre === 0;
@@ -1056,6 +1108,7 @@ function afficherEtat(donnees) {
     tr.appendChild(selCell);
 
     const idCell = document.createElement("td");
+    idCell.className = "element-cell";
     const icone = document.createElement("span");
     icone.textContent = fichier.kind === "directory" ? "📁 " : "📄 ";
     idCell.appendChild(icone);
@@ -1064,13 +1117,10 @@ function afficherEtat(donnees) {
     idCell.appendChild(code);
     tr.appendChild(idCell);
 
-    const haCell = document.createElement("td");
-    haCell.textContent = fichier.ha_path;
-    tr.appendChild(haCell);
-
-    const gitCell = document.createElement("td");
-    gitCell.textContent = fichier.git_path;
-    tr.appendChild(gitCell);
+    const pathsCell = document.createElement("td");
+    pathsCell.appendChild(construireLigneChemin(t("path_tag_ha"), fichier.ha_path));
+    pathsCell.appendChild(construireLigneChemin(t("path_tag_git"), fichier.git_path));
+    tr.appendChild(pathsCell);
 
     const dirCell = document.createElement("td");
     const dirSelect = document.createElement("select");
@@ -3988,7 +4038,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/2.5.0"
+    server_version = "HomelabGitManagement/2.5.1"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 

@@ -2,6 +2,26 @@
 
 All notable changes to this add-on are documented here.
 
+## 2.5.1 — a tidier, always-fits table
+
+- Changed: the "HA path" and "Git path" columns are now a single "Paths"
+  column, each path shown on its own line, truncated with an ellipsis and
+  the full path available as a hover tooltip — this alone roughly halves
+  how wide the table needs to be.
+- Fixed: on any reasonably sized screen (roughly a small tablet upward),
+  the table no longer shows its own horizontal scrollbar — it was doing
+  so even with plenty of room to spare, most noticeably once a real,
+  longer list of mappings (long nested paths in particular) was
+  configured. The table now sizes its columns to always fit the
+  available width instead of forcing a fixed minimum wider than what a
+  normal window actually has. On a genuinely narrow (phone-width)
+  screen, it still scrolls horizontally rather than squeezing every
+  column illegibly — a real subset of columns adapts to that width
+  first (smaller padding, no HA/Git tag labels).
+- Polish: subtle zebra striping and a hover highlight on rows, to make a
+  long list easier to scan and to make it clearer which row a click will
+  land on.
+
 ## 2.5.0 — bulk selection, and a guardrail against duplicate paths
 
 - Added: each row in the "Managed elements" table now has a checkbox, plus
