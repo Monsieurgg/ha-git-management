@@ -159,6 +159,12 @@ table { width: 100%; min-width: 900px; border-collapse: collapse; }
 th, td { padding: 10px 10px; border-bottom: 1px solid var(--border); text-align: left; font-size: 13px; vertical-align: middle; }
 th { background: var(--surface-soft); color: var(--muted); font-weight: 600; }
 tbody tr:last-child td { border-bottom: 0; }
+.checkbox-col { width: 1%; padding-right: 0; }
+button.danger { border-color: var(--danger); color: var(--danger); }
+.bulk-toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 17px;
+  border-bottom: 1px solid var(--border); background: var(--surface-soft); flex-wrap: wrap; }
+.bulk-toolbar-count { font-size: 13px; font-weight: 600; color: var(--text); margin-right: 4px; }
+.bulk-edit-count { margin: 0 0 4px; font-size: 13px; color: var(--muted); }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
 .key-box { display: block; width: 100%; padding: 12px; background: var(--surface-soft); border: 1px solid var(--border);
   border-radius: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;
@@ -362,10 +368,17 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
           <input id="import-mappings-input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
         </div>
       </div>
+      <div id="bulk-toolbar" class="bulk-toolbar" hidden>
+        <span id="bulk-toolbar-count" class="bulk-toolbar-count"></span>
+        <button id="bulk-edit-btn" type="button" data-i18n="bulk_edit">Edit selected</button>
+        <button id="bulk-delete-btn" type="button" class="danger" data-i18n="bulk_delete">Delete selected</button>
+        <button id="bulk-clear-btn" type="button" data-i18n="bulk_clear">Clear selection</button>
+      </div>
       <div class="table-wrapper">
         <table>
           <thead>
             <tr>
+              <th class="checkbox-col"><input id="select-all" type="checkbox"></th>
               <th data-i18n="th_element">Element</th>
               <th data-i18n="th_ha_path">HA path</th>
               <th data-i18n="th_git_path">Git path</th>
@@ -445,6 +458,45 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
     <div class="modal-footer">
       <button id="mapping-cancel" type="button" data-i18n="cancel">Cancel</button>
       <button id="mapping-save" type="button" class="primary" data-i18n="save">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="bulk-edit-modal" class="modal-overlay" hidden>
+  <div class="modal">
+    <div class="modal-header">
+      <h3 data-i18n="bulk_edit_modal_title">Edit selected mappings</h3>
+      <button id="bulk-edit-modal-close" type="button" class="modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="bulk-edit-error" class="error"></div>
+      <p id="bulk-edit-count" class="bulk-edit-count"></p>
+
+      <label class="form-label" data-i18n="field_direction">Direction</label>
+      <select id="bulk-edit-direction" class="form-input">
+        <option value="" data-i18n="bulk_no_change">— Leave unchanged —</option>
+        <option value="git_to_ha" data-i18n="dir_git_to_ha">Git -&gt; Home Assistant</option>
+        <option value="ha_to_git" data-i18n="dir_ha_to_git">Home Assistant -&gt; Git</option>
+        <option value="bidirectional" data-i18n="dir_bidirectional">Bidirectional</option>
+      </select>
+
+      <label class="form-label" data-i18n="field_protect">🔒 Protect this file — never let Deploy/Git overwrite it</label>
+      <select id="bulk-edit-protect" class="form-input">
+        <option value="" data-i18n="bulk_no_change">— Leave unchanged —</option>
+        <option value="true" data-i18n="bulk_enable">Enable</option>
+        <option value="false" data-i18n="bulk_disable">Disable</option>
+      </select>
+
+      <label class="form-label" data-i18n="field_normalize_line_endings">🔧 Auto-fix line endings on Push instead of blocking</label>
+      <select id="bulk-edit-normalize" class="form-input">
+        <option value="" data-i18n="bulk_no_change">— Leave unchanged —</option>
+        <option value="true" data-i18n="bulk_enable">Enable</option>
+        <option value="false" data-i18n="bulk_disable">Disable</option>
+      </select>
+    </div>
+    <div class="modal-footer">
+      <button id="bulk-edit-cancel" type="button" data-i18n="cancel">Cancel</button>
+      <button id="bulk-edit-save" type="button" class="primary" data-i18n="save">Save</button>
     </div>
   </div>
 </div>
@@ -622,6 +674,17 @@ const STRINGS = {
     mapping_error_direction: "Could not change direction: ",
     restart_overlay_text: "Applying your change — the add-on is restarting…",
     restart_overlay_timeout: "This is taking longer than expected. Try reloading this page in a moment.",
+    select_all: "Select all", select_row: "Select row {id}",
+    bulk_selected_count: "{count} selected",
+    bulk_delete: "Delete selected", bulk_edit: "Edit selected", bulk_clear: "Clear selection",
+    bulk_confirm_delete: "Delete {count} mapping(s)?\n\nThis only removes them from the configuration — no file is touched.",
+    bulk_error_delete: "Could not delete: ",
+    bulk_edit_modal_title: "Edit selected mappings",
+    bulk_edit_count: "{count} mapping(s) selected. Only the fields you change below will be applied to all of them.",
+    bulk_no_change: "— Leave unchanged —",
+    bulk_enable: "Enable", bulk_disable: "Disable",
+    bulk_edit_error_nothing: "Choose at least one field to change.",
+    bulk_edit_error_save: "Could not save: ",
   },
   fr: {
     title: "Homelab Git Management",
@@ -728,6 +791,17 @@ const STRINGS = {
     mapping_error_direction: "Impossible de changer la direction : ",
     restart_overlay_text: "Application du changement — l'add-on redémarre…",
     restart_overlay_timeout: "C'est plus long que prévu. Essaie de recharger cette page dans un instant.",
+    select_all: "Tout sélectionner", select_row: "Sélectionner la ligne {id}",
+    bulk_selected_count: "{count} sélectionné(s)",
+    bulk_delete: "Supprimer la sélection", bulk_edit: "Modifier la sélection", bulk_clear: "Désélectionner",
+    bulk_confirm_delete: "Supprimer {count} mapping(s) ?\n\nCela retire uniquement la configuration — aucun fichier n'est touché.",
+    bulk_error_delete: "Impossible de supprimer : ",
+    bulk_edit_modal_title: "Modifier les mappings sélectionnés",
+    bulk_edit_count: "{count} mapping(s) sélectionné(s). Seuls les champs que vous changez ci-dessous leur seront appliqués.",
+    bulk_no_change: "— Ne pas changer —",
+    bulk_enable: "Activer", bulk_disable: "Désactiver",
+    bulk_edit_error_nothing: "Choisissez au moins un champ à modifier.",
+    bulk_edit_error_save: "Impossible d'enregistrer : ",
   },
 };
 
@@ -758,6 +832,10 @@ const el = (id) => document.getElementById(id);
 
 let mappingsActuels = [];
 let mappingEnEdition = null;
+// Selection state for the bulk toolbar — kept across afficherEtat() rebuilds
+// (the table is redrawn on every 5s poll and after every mutation), pruned
+// to ids that still exist each time so a deleted/renamed row can't linger.
+let mappingsSelectionnes = new Set();
 let browseRacine = null;
 let browseCheminCourant = "";
 
@@ -921,12 +999,30 @@ function construireMenuKebab(fichier) {
   return enveloppe;
 }
 
+function mettreAJourBarreSelection() {
+  const nombre = mappingsSelectionnes.size;
+  el("bulk-toolbar").hidden = nombre === 0;
+  el("bulk-toolbar-count").textContent = t("bulk_selected_count").replace("{count}", nombre);
+
+  const toutesCoches = mappingsActuels.length > 0 && mappingsActuels.every((m) => mappingsSelectionnes.has(m.id));
+  const selectAll = el("select-all");
+  selectAll.checked = toutesCoches;
+  selectAll.indeterminate = nombre > 0 && !toutesCoches;
+}
+
 function afficherEtat(donnees) {
   // The table is about to be rebuilt from scratch; an open kebab menu
   // belongs to a row that's about to be discarded (it lives under <body>
   // while open, see positionnerMenuKebab(), so it wouldn't disappear on
   // its own just because its row does).
   fermerMenuKebab();
+
+  // Prune the selection to ids that still exist — a row can vanish between
+  // two polls (deleted here, or from another browser tab/device).
+  const idsActuels = new Set(donnees.elements.map((f) => f.id));
+  for (const id of [...mappingsSelectionnes]) {
+    if (!idsActuels.has(id)) mappingsSelectionnes.delete(id);
+  }
 
   el("version").textContent = donnees.application_version;
   el("managed").textContent = donnees.summary.managed;
@@ -943,6 +1039,21 @@ function afficherEtat(donnees) {
 
   for (const fichier of donnees.elements) {
     const tr = document.createElement("tr");
+
+    const selCell = document.createElement("td");
+    selCell.className = "checkbox-col";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "row-select";
+    checkbox.checked = mappingsSelectionnes.has(fichier.id);
+    checkbox.setAttribute("aria-label", t("select_row").replace("{id}", fichier.id));
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) mappingsSelectionnes.add(fichier.id);
+      else mappingsSelectionnes.delete(fichier.id);
+      mettreAJourBarreSelection();
+    });
+    selCell.appendChild(checkbox);
+    tr.appendChild(selCell);
 
     const idCell = document.createElement("td");
     const icone = document.createElement("span");
@@ -1026,6 +1137,7 @@ function afficherEtat(donnees) {
   }
 
   mappingsActuels = donnees.elements;
+  mettreAJourBarreSelection();
 }
 
 function copierMappingsPourEnvoi() {
@@ -1267,6 +1379,103 @@ async function supprimerMapping(id) {
   } catch (exception) {
     erreur.textContent = t("mapping_error_delete") + exception.message;
     erreur.style.display = "block";
+  }
+}
+
+async function supprimerSelection() {
+  const nombre = mappingsSelectionnes.size;
+  if (nombre === 0) return;
+  if (!window.confirm(t("bulk_confirm_delete").replace("{count}", nombre))) return;
+
+  const nouvelleListe = copierMappingsPourEnvoi().filter((mapping) => !mappingsSelectionnes.has(mapping.id));
+  const erreur = el("error");
+
+  try {
+    const reponse = await fetch(`${cheminBaseIngress()}api/mappings`, {
+      method: "POST", cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mappings: nouvelleListe }),
+    });
+    const donnees = await reponse.json();
+    if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
+
+    erreur.style.display = "none";
+    mappingsSelectionnes.clear();
+
+    if (donnees.restarting) {
+      attendreRedemarrage();
+    } else {
+      afficherEtat(donnees);
+    }
+  } catch (exception) {
+    erreur.textContent = t("bulk_error_delete") + exception.message;
+    erreur.style.display = "block";
+  }
+}
+
+function ouvrirModalEditionMasse() {
+  if (mappingsSelectionnes.size === 0) return;
+
+  el("bulk-edit-error").style.display = "none";
+  el("bulk-edit-count").textContent = t("bulk_edit_count").replace("{count}", mappingsSelectionnes.size);
+  el("bulk-edit-direction").value = "";
+  el("bulk-edit-protect").value = "";
+  el("bulk-edit-normalize").value = "";
+  el("bulk-edit-modal").hidden = false;
+}
+
+function fermerModalEditionMasse() {
+  el("bulk-edit-modal").hidden = true;
+}
+
+async function enregistrerEditionMasse() {
+  const erreur = el("bulk-edit-error");
+  erreur.style.display = "none";
+
+  const direction = el("bulk-edit-direction").value;
+  const protect = el("bulk-edit-protect").value;
+  const normalize = el("bulk-edit-normalize").value;
+
+  if (!direction && !protect && !normalize) {
+    erreur.textContent = t("bulk_edit_error_nothing");
+    erreur.style.display = "block";
+    return;
+  }
+
+  const nouvelleListe = copierMappingsPourEnvoi().map((mapping) => {
+    if (!mappingsSelectionnes.has(mapping.id)) return mapping;
+    const maj = { ...mapping };
+    if (direction) maj.direction = direction;
+    if (protect) maj.protect_from_git = protect === "true";
+    if (normalize) maj.normalize_line_endings = normalize === "true";
+    return maj;
+  });
+
+  const boutonSave = el("bulk-edit-save");
+  boutonSave.disabled = true;
+
+  try {
+    const reponse = await fetch(`${cheminBaseIngress()}api/mappings`, {
+      method: "POST", cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mappings: nouvelleListe }),
+    });
+    const donnees = await reponse.json();
+    if (!reponse.ok || !donnees.ok) throw new Error(donnees.error || `HTTP ${reponse.status}`);
+
+    fermerModalEditionMasse();
+    mappingsSelectionnes.clear();
+
+    if (donnees.restarting) {
+      attendreRedemarrage();
+    } else {
+      afficherEtat(donnees);
+    }
+  } catch (exception) {
+    erreur.textContent = t("bulk_edit_error_save") + exception.message;
+    erreur.style.display = "block";
+  } finally {
+    boutonSave.disabled = false;
   }
 }
 
@@ -2089,6 +2298,27 @@ el("mapping-modal-close").addEventListener("click", fermerModalMapping);
 el("mapping-cancel").addEventListener("click", fermerModalMapping);
 el("mapping-save").addEventListener("click", sauvegarderMapping);
 
+el("select-all").addEventListener("change", () => {
+  const coche = el("select-all").checked;
+  if (coche) {
+    mappingsActuels.forEach((m) => mappingsSelectionnes.add(m.id));
+  } else {
+    mappingsSelectionnes.clear();
+  }
+  document.querySelectorAll("tbody#rows .row-select").forEach((c) => { c.checked = coche; });
+  mettreAJourBarreSelection();
+});
+el("bulk-clear-btn").addEventListener("click", () => {
+  mappingsSelectionnes.clear();
+  document.querySelectorAll("tbody#rows .row-select").forEach((c) => { c.checked = false; });
+  mettreAJourBarreSelection();
+});
+el("bulk-delete-btn").addEventListener("click", supprimerSelection);
+el("bulk-edit-btn").addEventListener("click", ouvrirModalEditionMasse);
+el("bulk-edit-modal-close").addEventListener("click", fermerModalEditionMasse);
+el("bulk-edit-cancel").addEventListener("click", fermerModalEditionMasse);
+el("bulk-edit-save").addEventListener("click", enregistrerEditionMasse);
+
 el("mapping-direction").addEventListener("change", () => {
   appliquerDefautProtection();
   mettreAJourAvertissementProtection();
@@ -2647,6 +2877,8 @@ def valider_mappings_proposes(module, mappings_proposes: list) -> list:
     to the user) on the first problem found."""
 
     ids_vus: set[str] = set()
+    chemins_ha_vus: dict[Path, str] = {}
+    chemins_git_vus: dict[Path, str] = {}
     resultat = []
 
     for entree in mappings_proposes:
@@ -2692,6 +2924,27 @@ def valider_mappings_proposes(module, mappings_proposes: list) -> list:
 
         chemin_git = module.convertir_chemin_git(git_path)
         module.verifier_chemin_resolu(chemin_git, module.GIT_ROOT, "/data/repository")
+
+        # Two mappings pointing at the same underlying file/directory would
+        # each keep their own, independent sync-state — a deploy or push
+        # through one could silently undo what the other just did. ha_path
+        # and git_path are picked independently per mapping, so nothing
+        # before this catches two ids quietly targeting the same real path.
+        if chemin_ha in chemins_ha_vus:
+            raise ValueError(
+                f"{element_id}: ha_path '{ha_path}' is already used by mapping "
+                f"'{chemins_ha_vus[chemin_ha]}' — two mappings must never target "
+                "the same Home Assistant file/directory"
+            )
+        chemins_ha_vus[chemin_ha] = element_id
+
+        if chemin_git in chemins_git_vus:
+            raise ValueError(
+                f"{element_id}: git_path '{git_path}' is already used by mapping "
+                f"'{chemins_git_vus[chemin_git]}' — two mappings must never target "
+                "the same Git file/directory"
+            )
+        chemins_git_vus[chemin_git] = element_id
 
         protect_from_git = entree.get("protect_from_git")
 
@@ -3735,7 +3988,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/2.4.2"
+    server_version = "HomelabGitManagement/2.5.0"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 

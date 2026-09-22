@@ -92,6 +92,31 @@ field of the mapping stays as it was. A failed save reverts the dropdown
 to its previous value rather than leaving it showing something that
 wasn't actually saved.
 
+**Bulk selection.** Each row has a checkbox, and the table header has a
+"select all" checkbox (it shows as a dash when only some rows are
+selected). Selecting at least one row shows a toolbar with the selection
+count and three actions: "Edit selected" opens a modal with Direction,
+Protect from Git and Auto-fix line endings, each defaulting to "Leave
+unchanged" — only the fields you actually change are applied, to every
+selected mapping, in a single save; the identifier and paths stay
+per-mapping and aren't editable this way. "Delete selected" removes every
+selected mapping in one save, after a single confirmation naming how many
+— exactly like the single-row Delete, this only touches the
+configuration, never a file. "Clear selection" just clears the checkboxes.
+
+**Duplicate paths are rejected.** Two mappings are never allowed to point
+at the same Home Assistant path, or the same Git path — each mapping
+tracks its own sync state independently, so two of them quietly sharing
+one real file would let a deploy or push through either silently undo
+what the other just did. Every save (the form, a direction change, the
+Excel import below, or the bulk actions above) is checked for this before
+anything is written; a collision is rejected with a clear error naming
+both mapping ids and the path they collide on. If you already have such a
+duplicate — most commonly after importing an Excel file that overlaps
+with mappings entered by hand — the very next save will point it out; use
+the row checkboxes and "Delete selected" to remove the one you don't
+want, then save again.
+
 **Bulk export/import (Excel).** "Export mappings (Excel)" downloads an
 `.xlsx` workbook: one row per current mapping, plus a few blank rows
 ready to fill in. The HA file and Git file columns are native Excel

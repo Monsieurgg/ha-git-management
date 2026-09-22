@@ -2,6 +2,35 @@
 
 All notable changes to this add-on are documented here.
 
+## 2.5.0 — bulk selection, and a guardrail against duplicate paths
+
+- Added: each row in the "Managed elements" table now has a checkbox, plus
+  a "select all" checkbox in the header (tri-state: it shows as
+  indeterminate when only some rows are selected). Selecting at least one
+  row shows a toolbar above the table with the selection count and three
+  actions — Edit selected, Delete selected, Clear selection.
+- Added: "Delete selected" removes every selected mapping in a single
+  save, after one confirmation naming how many will be removed. Like the
+  existing single-row delete, this only removes the configuration — no
+  file is touched.
+- Added: "Edit selected" opens a modal with Direction, Protect from Git,
+  and Auto-fix line endings, each defaulting to "Leave unchanged". Only
+  the fields you actually set are applied — to every selected mapping at
+  once, in a single save. The identifier and paths, being unique to each
+  mapping, aren't editable in bulk.
+- Fixed: nothing previously stopped two mappings from pointing at the
+  same Home Assistant path, or the same Git path — each mapping tracks
+  its own independent sync state, so two of them quietly sharing one real
+  file meant a deploy or push through either could silently undo what the
+  other had just done. Saving mappings (whether through the form, the
+  Excel import, a direction change, or the new bulk actions) is now
+  rejected with a clear error naming both mapping ids and the path they
+  collide on, before anything is written. If you already have such a
+  duplicate — most commonly after re-importing a bulk Excel file that
+  overlaps with mappings entered by hand — the very next save will point
+  it out; use the new "select rows" + "Delete selected" to remove the one
+  you don't want, then save normally again.
+
 ## 2.4.2 — fix the "⋮" menu getting clipped near the bottom of the table
 
 - Fixed: opening the "⋮" (manage) menu on a row near the bottom of the
