@@ -156,7 +156,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 .status-line { color: var(--muted); font-size: 12px; text-align: right; }
 .table-wrapper { overflow-x: auto; }
 table { width: 100%; min-width: 900px; border-collapse: collapse; }
-th, td { padding: 12px 14px; border-bottom: 1px solid var(--border); text-align: left; font-size: 13px; vertical-align: middle; }
+th, td { padding: 10px 10px; border-bottom: 1px solid var(--border); text-align: left; font-size: 13px; vertical-align: middle; }
 th { background: var(--surface-soft); color: var(--muted); font-weight: 600; }
 tbody tr:last-child td { border-bottom: 0; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
@@ -243,8 +243,12 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
 .browse-up { color: var(--muted); font-weight: 600; }
 .kebab-wrapper { position: relative; display: inline-block; }
 .kebab-btn { padding: 4px 10px; font-size: 16px; line-height: 1; }
-.kebab-menu { position: absolute; right: 0; top: 100%; margin-top: 4px; background: var(--surface);
-  border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); min-width: 140px;
+/* position: fixed, not absolute — while open this menu is moved to a direct
+   child of <body> and placed with inline left/top (see positionnerMenuKebab()),
+   specifically so it is never clipped by an ancestor's overflow: hidden (the
+   surrounding .panel) or forced into extra scroll room it doesn't need. */
+.kebab-menu { position: fixed; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); min-width: 200px;
   z-index: 20; overflow: hidden; }
 .kebab-menu button { display: block; width: 100%; text-align: left; border: none; border-radius: 0;
   padding: 9px 12px; background: var(--surface); font-size: 13px; }
@@ -783,19 +787,60 @@ function cheminBaseIngress() {
 }
 
 let menuKebabOuvert = null;
+let menuKebabAncre = null;
 
 function fermerMenuKebab() {
   if (menuKebabOuvert) {
-    menuKebabOuvert.hidden = true;
+    // Removed outright, not just hidden: while open it lives under <body>
+    // (see positionnerMenuKebab()), detached from the row that created it —
+    // nothing else ever needs to find it again once closed, and this also
+    // guarantees no stale copy can survive the table's own next refresh.
+    menuKebabOuvert.remove();
     menuKebabOuvert = null;
+    menuKebabAncre = null;
   }
 }
 
 document.addEventListener("click", (evenement) => {
-  if (menuKebabOuvert && !menuKebabOuvert.parentElement.contains(evenement.target)) {
+  if (
+    menuKebabOuvert && menuKebabAncre
+    && !menuKebabAncre.contains(evenement.target)
+    && !menuKebabOuvert.contains(evenement.target)
+  ) {
     fermerMenuKebab();
   }
 });
+
+window.addEventListener("resize", fermerMenuKebab);
+// Capture phase: catches a scroll on any scrollable ancestor, not just the
+// window itself — position: fixed means the menu would otherwise stay put
+// while the button it belongs to scrolls away underneath it.
+window.addEventListener("scroll", fermerMenuKebab, true);
+
+// Placed relative to the viewport (the menu is position: fixed, appended
+// directly to <body> right before this runs) instead of the row that owns
+// it, so it can never be clipped by the surrounding .panel's own
+// overflow: hidden — the exact bug this replaces. Flips above the button
+// instead of below when there isn't room underneath (e.g. the table's
+// last row), and stays inside the horizontal viewport bounds.
+function positionnerMenuKebab(menu, bouton) {
+  const rect = bouton.getBoundingClientRect();
+  const marge = 8;
+  const largeur = Math.max(menu.offsetWidth, 1);
+
+  let gauche = rect.right - largeur;
+  gauche = Math.max(marge, Math.min(gauche, window.innerWidth - largeur - marge));
+
+  const hauteur = menu.offsetHeight;
+  const espaceEnDessous = window.innerHeight - rect.bottom;
+
+  const haut = (espaceEnDessous >= hauteur + marge || espaceEnDessous >= rect.top)
+    ? rect.bottom + 4
+    : Math.max(marge, rect.top - hauteur - 4);
+
+  menu.style.left = `${gauche}px`;
+  menu.style.top = `${haut}px`;
+}
 
 function construireMenuKebab(fichier) {
   const enveloppe = document.createElement("div");
@@ -862,17 +907,27 @@ function construireMenuKebab(fichier) {
     fermerMenuKebab();
     if (!etaitOuvert) {
       menu.hidden = false;
+      menu.style.visibility = "hidden"; // measure its real size before it's ever seen at the wrong spot
+      document.body.appendChild(menu);
+      positionnerMenuKebab(menu, boutonKebab);
+      menu.style.visibility = "";
       menuKebabOuvert = menu;
+      menuKebabAncre = enveloppe;
     }
   });
 
   enveloppe.appendChild(boutonKebab);
-  enveloppe.appendChild(menu);
 
   return enveloppe;
 }
 
 function afficherEtat(donnees) {
+  // The table is about to be rebuilt from scratch; an open kebab menu
+  // belongs to a row that's about to be discarded (it lives under <body>
+  // while open, see positionnerMenuKebab(), so it wouldn't disappear on
+  // its own just because its row does).
+  fermerMenuKebab();
+
   el("version").textContent = donnees.application_version;
   el("managed").textContent = donnees.summary.managed;
   el("identical").textContent = donnees.summary.identical;
@@ -3680,7 +3735,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/2.4.1"
+    server_version = "HomelabGitManagement/2.4.2"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 

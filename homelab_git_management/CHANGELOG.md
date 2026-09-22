@@ -2,6 +2,21 @@
 
 All notable changes to this add-on are documented here.
 
+## 2.4.2 — fix the "⋮" menu getting clipped near the bottom of the table
+
+- Fixed: opening the "⋮" (manage) menu on a row near the bottom of the
+  "Managed elements" table — most obviously the very last row — cut the
+  menu off, because it was positioned relative to its row inside a
+  panel with `overflow: hidden`, and a menu opening downward from a row
+  at the very bottom of that panel had nowhere to go but past its edge.
+  The menu is now positioned against the actual browser viewport
+  instead, and opens upward automatically when there isn't room below —
+  it's never clipped by the table's own container again, regardless of
+  which row it's opened from or how far the page is scrolled.
+- Trimmed the table's cell padding slightly, buying back some width on
+  narrower windows where the table previously needed to scroll
+  horizontally sooner than it should have.
+
 ## 2.4.1 — fix a stale label
 
 - Fixed: the mapping form's Type dropdown still said "Directory
