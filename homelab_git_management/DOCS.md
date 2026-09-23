@@ -263,16 +263,21 @@ session — see **Exposure and authentication** below.
 **equivalent** state (same content once a UTF-8 byte-order mark, line
 endings and a trailing newline are normalized away, but not byte-for-byte
 the same — most often a leftover CRLF/LF mismatch) can be made
-byte-identical from the "⋮" menu's **Make identical** action, for any
-`ha_to_git` or `bidirectional` mapping. This takes Home Assistant's exact
-bytes and writes them into Git as a real commit, after the same explicit
-confirmation every write here requires. It reuses the exact same write
-key and commit/push/verify/rollback machinery as a normal push, with the
-line-ending guard described above deliberately not applied — swapping
-the line ending is the intended outcome of this specific action, not an
-accident it should catch. The resulting commit message says explicitly
-that it is a formatting-only change. Not offered for `git_to_ha`
-mappings, since that direction never writes to Git.
+byte-identical from the "⋮" menu's **Make identical** action, for a
+mapping of *any* direction and either kind (file or directory). It always
+writes whichever way the mapping is actually configured to write:
+Home Assistant → Git for `ha_to_git`/`bidirectional` (a real commit,
+after the same explicit confirmation every write here requires — reusing
+the exact same write key and commit/push/verify/rollback machinery as a
+normal push, with the line-ending guard described above deliberately not
+applied, since swapping the line ending is the intended outcome here, not
+an accident to catch; the resulting commit message says explicitly that
+it is a formatting-only change), or Git → Home Assistant for
+`git_to_ha` (a direct, backed-up write onto the live file — no commit
+involved, since nothing is being changed in Git). For a directory
+mapping, this normalizes every file in the tree that's merely
+"equivalent" (byte-for-byte identical files are left untouched), in one
+pass — the same directory-mirror machinery a Deploy/Push already uses.
 
 ## Two-way sync (bidirectional)
 
@@ -363,10 +368,10 @@ Assistant's own state.
 
 - **identical** — byte-for-byte equal.
 - **equivalent** — equal after normalizing UTF-8 BOM and line endings
-  (still considered safe / no action needed). For `ha_to_git`/
-  `bidirectional` mappings, the "⋮" menu's **Make identical** action can
-  force byte-for-byte identity — see
-  [Pushing Home Assistant changes to Git](#pushing-home-assistant-changes-to-git-ha_to_git).
+  (still considered safe / no action needed). The "⋮" menu's **Make
+  identical** action can force byte-for-byte identity, for any direction
+  and either kind (file or directory) — see
+  [Normalizing "equivalent" to "identical"](#pushing-home-assistant-changes-to-git-ha_to_git).
 - **different** — a real content difference. Eligible for deployment if
   `direction: git_to_ha`.
 - **missing_ha** / **missing_git** / **missing_both** — the path doesn't
@@ -423,9 +428,10 @@ of one file:
 - `protect_from_git` applies to a directory mapping exactly as it does
   to a file: `true` blocks that whole directory from ever being deployed
   to (Git → Home Assistant).
-- Not carried over from file mappings: the "⋮ → Make identical" action
-  (formatting-only normalization) and the single-file diff preview don't
-  apply to a whole tree, so neither is offered for a directory mapping.
+- Not carried over from file mappings: the single-file diff preview
+  doesn't apply to a whole tree, so it isn't offered for a directory
+  mapping. "⋮ → Make identical" *is* offered, though — see
+  [Normalizing "equivalent" to "identical"](#pushing-home-assistant-changes-to-git-ha_to_git).
 
 ## Protected files
 

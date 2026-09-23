@@ -1558,7 +1558,14 @@ def deployer_fichier(element: dict, etat: str) -> None:
     if not os.access(parent_ha, os.W_OK | os.X_OK):
         raise RuntimeError("Home Assistant parent directory not writable")
 
-    if etat not in {"different", "missing_ha"}:
+    # "equivalent" (formatting-only difference — BOM, line endings, a
+    # trailing newline) is accepted here too, not just "different": the
+    # ordinary deploy dispatch never reaches this state on its own (it
+    # treats "equivalent" as nothing to do), but the explicit "make
+    # identical" action (normaliser_vers_ha()) calls this function
+    # directly for exactly that state, reusing this same backup/write/
+    # verify/rollback path rather than duplicating it.
+    if etat not in {"different", "missing_ha", "equivalent"}:
         raise RuntimeError(f"state not deployable: {etat}")
 
     contenu_source = chemin_git.read_bytes()
@@ -1691,7 +1698,10 @@ def deployer_repertoire(element: dict, etat: str) -> None:
     if chemin_ha.exists() and not chemin_ha.is_dir():
         raise RuntimeError("existing Home Assistant target is not a directory")
 
-    if etat not in {"different", "missing_ha"}:
+    # See the matching comment in deployer_fichier(): "equivalent" is
+    # accepted too, only reachable via the explicit "make identical"
+    # action (normaliser_repertoire()), never the ordinary deploy dispatch.
+    if etat not in {"different", "missing_ha", "equivalent"}:
         raise RuntimeError(f"state not deployable: {etat}")
 
     chemin_ha.mkdir(parents=True, exist_ok=True)
@@ -2312,6 +2322,78 @@ def normaliser_vers_git(element: dict, etat: str) -> None:
     )
 
 
+def normaliser_vers_ha(element: dict, etat: str) -> None:
+    """The git_to_ha-direction counterpart of normaliser_vers_git(): forces
+    Git's exact bytes into Home Assistant for a mapping currently
+    classified "equivalent" (same content once a UTF-8 BOM, line endings
+    and a trailing newline are normalized away, but not byte-identical).
+    Unlike the Home Assistant -> Git direction, deploying Git -> Home
+    Assistant has no line-ending-convention guard to route around in the
+    first place — that guard exists in deployer_vers_git() only to
+    protect Git's own commit history from being silently rewritten by
+    line-ending churn on an ordinary push, and simply doesn't apply when
+    writing into a live Home Assistant file — so this reuses
+    deployer_fichier() as-is rather than duplicating its backup/write/
+    verify/rollback logic."""
+
+    if element["direction"] not in {"git_to_ha", "bidirectional"}:
+        raise RuntimeError("this mapping cannot deploy Git -> Home Assistant")
+
+    if element["kind"] == "directory":
+        raise RuntimeError("normaliser_vers_ha is for file mappings only")
+
+    if etat != "equivalent":
+        raise RuntimeError(
+            "normalize-to-identical only applies when Home Assistant and "
+            "Git already agree except for formatting (byte-order mark, "
+            "line endings, trailing newline)"
+        )
+
+    deployer_fichier(element, etat)
+
+
+def normaliser_repertoire(element: dict, etat: str, sens: str) -> None:
+    """The directory-kind counterpart of normaliser_vers_git()/
+    normaliser_vers_ha(): forces byte-for-byte identity across the whole
+    tree for a mapping classer_repertoire() currently classifies
+    "equivalent" (every file already matches once formatting is
+    normalized away, none genuinely differ). planifier_repertoire()
+    already treats a merely-"equivalent" file exactly like a "different"
+    one — byte-for-byte mirroring, not "close enough" — so this simply
+    reuses deployer_repertoire()/pousser_repertoire() as-is, in whichever
+    direction `sens` asks for; the only thing missing before this was
+    permission to run one of them on an "equivalent" state at all."""
+
+    if element["kind"] != "directory":
+        raise RuntimeError("normaliser_repertoire is for directory mappings only")
+
+    if etat != "equivalent":
+        raise RuntimeError(
+            "normalize-to-identical only applies when Home Assistant and "
+            "Git already agree except for formatting (byte-order mark, "
+            "line endings, trailing newline)"
+        )
+
+    if sens == "git_to_ha":
+
+        if element["direction"] not in {"git_to_ha", "bidirectional"}:
+            raise RuntimeError("this mapping cannot deploy Git -> Home Assistant")
+
+        deployer_repertoire(element, etat)
+        return
+
+    if sens == "ha_to_git":
+
+        if element["direction"] not in {"ha_to_git", "bidirectional"}:
+            raise RuntimeError("this mapping cannot push to Git")
+
+        etat_synchro = etats_synchro.get(element["id"], "clean")
+        pousser_repertoire(element, etat_synchro)
+        return
+
+    raise RuntimeError("sens must be 'git_to_ha' or 'ha_to_git'")
+
+
 def obtenir_plan_repertoire(target: str, sens: str) -> list[dict]:
     """Read-only: the add/update/delete plan a directory deploy (`sens`
     "git_to_ha") or push (`sens` "ha_to_git") would apply for `target`,
@@ -2540,10 +2622,16 @@ def acquitter_git(target: str) -> None:
 
 
 def normaliser_git(target: str) -> None:
-    """Entry point for the "make identical" kebab-menu action: forces
-    Home Assistant's exact bytes into Git for a mapping the comparison
-    currently classifies as "equivalent" (same content once formatting
-    differences are normalized away, but not byte-identical)."""
+    """Entry point for the "make identical" kebab-menu action: forces one
+    side's exact bytes onto the other, for any mapping (file or
+    directory) the comparison currently classifies as "equivalent" (same
+    content once formatting differences — byte-order mark, line endings,
+    a trailing newline — are normalized away, but not byte-identical).
+    Goes whichever direction the mapping is actually configured to
+    write: Git -> Home Assistant for a git_to_ha mapping, Home
+    Assistant -> Git otherwise (ha_to_git or bidirectional — the
+    original, unchanged direction this action always went before a
+    git_to_ha mapping could reach it too)."""
 
     elements_par_id = {element["id"]: element for element in elements}
 
@@ -2555,8 +2643,16 @@ def normaliser_git(target: str) -> None:
 
     log(f"[COMMAND] normalize-to-identical requested: {target}")
 
+    est_repertoire = element["kind"] == "directory"
+    sens = "git_to_ha" if element["direction"] == "git_to_ha" else "ha_to_git"
+
     try:
-        normaliser_vers_git(element, etat)
+        if est_repertoire:
+            normaliser_repertoire(element, etat, sens)
+        elif sens == "git_to_ha":
+            normaliser_vers_ha(element, etat)
+        else:
+            normaliser_vers_git(element, etat)
     except Exception as exc:
         erreur(f"{target}: {exc}")
 

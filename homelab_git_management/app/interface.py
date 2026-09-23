@@ -164,11 +164,13 @@ tbody tr:last-child td { border-bottom: 0; }
 tbody tr:nth-child(even) { background: rgba(15, 23, 42, 0.015); }
 tbody tr:hover { background: var(--surface-soft); }
 .checkbox-col { width: 34px; padding-right: 0; }
-.col-element { width: 16%; }
-.col-paths { width: 34%; }
-.col-direction { width: 15%; }
+.col-icon { width: 30px; padding-left: 14px; padding-right: 0; }
+.col-element { width: 14%; }
+.col-paths { width: 40%; }
+.col-direction { width: 14%; }
 .col-comparison { width: 13%; }
-.col-manage { width: 22%; }
+.col-manage { width: 13%; }
+.icon-cell { font-size: 15px; text-align: center; }
 .element-cell { overflow-wrap: anywhere; }
 .path-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .path-line + .path-line { margin-top: 4px; }
@@ -176,6 +178,7 @@ tbody tr:hover { background: var(--surface-soft); }
   color: var(--muted); background: var(--surface-soft); border: 1px solid var(--border); border-radius: 4px;
   padding: 1px 5px; line-height: 1.5; }
 .path-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default;
+  direction: rtl; text-align: left;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; color: var(--text); }
 button.danger { border-color: var(--danger); color: var(--danger); }
 .bulk-toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 17px;
@@ -213,10 +216,11 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
   .summary { grid-template-columns: repeat(2, minmax(0,1fr)); }
 }
 @media (max-width: 860px) {
-  .col-element { width: 22%; }
-  .col-paths { width: 30%; }
+  .col-icon { width: 24px; padding-left: 8px; }
+  .col-element { width: 18%; }
+  .col-paths { width: 34%; }
   .col-direction, .col-comparison { width: 14%; }
-  .col-manage { width: 20%; }
+  .col-manage { width: 14%; }
   .path-tag { display: none; }
   th, td { padding: 8px 8px; font-size: 12px; }
 }
@@ -403,6 +407,7 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
         <table>
           <colgroup>
             <col class="checkbox-col">
+            <col class="col-icon">
             <col class="col-element">
             <col class="col-paths">
             <col class="col-direction">
@@ -412,6 +417,7 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
           <thead>
             <tr>
               <th class="checkbox-col"><input id="select-all" type="checkbox"></th>
+              <th class="col-icon"></th>
               <th data-i18n="th_element">Element</th>
               <th data-i18n="th_paths">Paths</th>
               <th data-i18n="th_direction">Direction</th>
@@ -633,6 +639,7 @@ const STRINGS = {
     confirm_force_deploy: 'Force-deploy "{target}"? This overwrites the current Home Assistant file with the GitHub version — the Home Assistant-side change shown in the diff will be discarded.',
     confirm_keep_git: 'Accept the current GitHub content as the new reference point for "{target}"? Nothing is pushed and Home Assistant is not touched — if it still differs afterward, a normal Push becomes available again.',
     confirm_normalize: 'Make "{target}" byte-for-byte identical? This takes the exact Home Assistant version (including its line endings) and writes it into Git as a formatting-only commit — no content is changing, only the byte-level representation.',
+    confirm_normalize_git_to_ha: 'Make "{target}" byte-for-byte identical? This takes the exact Git version (including its line endings) and writes it directly onto Home Assistant — no content is changing, only the byte-level representation.',
     keys_panel_title: "🔑 Deploy keys (read + write)",
     write_key_intro: "Only needed if you configure a mapping with direction: ha_to_git. This is a separate key from the one above — the read-only key never gains write access, and this key stays inactive until you add it on GitHub yourself, this time allowing write access.",
     setup_write_key_label: "Write-capable public key:",
@@ -751,6 +758,7 @@ const STRINGS = {
     confirm_force_deploy: 'Forcer le déploiement de « {target} » ? Ceci écrase le fichier Home Assistant actuel par la version GitHub — le changement côté Home Assistant affiché dans le diff sera perdu.',
     confirm_keep_git: 'Accepter le contenu GitHub actuel comme nouvelle référence pour « {target} » ? Rien n\'est envoyé et Home Assistant n\'est pas modifié — si ça diffère toujours ensuite, un envoi normal redevient possible.',
     confirm_normalize: 'Rendre « {target} » identique octet par octet ? Ceci prend la version Home Assistant exacte (y compris ses fins de ligne) et l\'écrit dans Git comme un commit purement formel — aucun contenu ne change, seule la représentation en octets change.',
+    confirm_normalize_git_to_ha: 'Rendre « {target} » identique octet par octet ? Ceci prend la version Git exacte (y compris ses fins de ligne) et l\'écrit directement sur Home Assistant — aucun contenu ne change, seule la représentation en octets change.',
     keys_panel_title: "🔑 Clés de déploiement (lecture + écriture)",
     write_key_intro: "Nécessaire uniquement si vous configurez un mapping avec direction: ha_to_git. C'est une clé séparée de celle ci-dessus — la clé en lecture seule n'obtient jamais d'accès écriture, et cette clé reste inactive tant que vous ne l'ajoutez pas vous-même sur GitHub, cette fois en autorisant l'écriture.",
     setup_write_key_label: "Clé publique en écriture :",
@@ -978,7 +986,7 @@ function construireMenuKebab(fichier) {
     const normalizeBtn = document.createElement("button");
     normalizeBtn.type = "button";
     normalizeBtn.textContent = t("mapping_normalize");
-    normalizeBtn.addEventListener("click", () => { fermerMenuKebab(); normaliserElement(fichier.id); });
+    normalizeBtn.addEventListener("click", () => { fermerMenuKebab(); normaliserElement(fichier.id, fichier.direction); });
     menu.appendChild(normalizeBtn);
   }
 
@@ -1033,7 +1041,37 @@ function construireMenuKebab(fichier) {
   return enveloppe;
 }
 
-function construireLigneChemin(etiquette, chemin) {
+// Purely cosmetic: picks a more specific icon than the generic
+// file/directory one, based on the mapping's own id and file extension —
+// never on content, so it stays correct even for a not-yet-existing
+// "create if missing" target.
+const CORE_YAML_IDS = new Set(["configuration", "scripts", "automations", "scenes"]);
+
+function iconePourElement(fichier) {
+  if (fichier.kind === "directory") return "📁";
+  const id = (fichier.id || "").toLowerCase();
+  if (CORE_YAML_IDS.has(id)) return "⚙️";
+  if (id.includes("dashboard")) return "🖥️";
+  if (id.includes("theme")) return "🎨";
+  if (/\.(sh|py)$/i.test(fichier.ha_path || "") || /\.(sh|py)$/i.test(fichier.git_path || "")) return "📜";
+  return "📄";
+}
+
+// The displayed value is truncated with direction:rtl so the ellipsis
+// falls at the START of the string, keeping the meaningful end (the
+// actual filename) visible — see .path-value. That trick reorders a
+// leading neutral character (a bare "/") to the visual end of the line
+// when there's no strong-direction character before it to anchor it, so
+// a leading "/config/" (every ha_path has one — HA_MANIFEST_ROOT is
+// always /config) would otherwise visibly flip there. Stripped here for
+// display only; the full original path (with its "/config/") is still
+// what the hover title and cheminComplet show.
+function afficherCheminHA(chemin) {
+  const prefixe = "/config/";
+  return chemin && chemin.startsWith(prefixe) ? chemin.slice(prefixe.length) : chemin;
+}
+
+function construireLigneChemin(etiquette, chemin, cheminComplet) {
   const ligne = document.createElement("div");
   ligne.className = "path-line";
 
@@ -1045,7 +1083,7 @@ function construireLigneChemin(etiquette, chemin) {
   const valeur = document.createElement("span");
   valeur.className = "path-value";
   valeur.textContent = chemin;
-  valeur.title = chemin; // full path on hover — the line itself is truncated with an ellipsis
+  valeur.title = cheminComplet != null ? cheminComplet : chemin; // full path on hover — the line itself is truncated with an ellipsis
   ligne.appendChild(valeur);
 
   return ligne;
@@ -1107,18 +1145,20 @@ function afficherEtat(donnees) {
     selCell.appendChild(checkbox);
     tr.appendChild(selCell);
 
+    const iconCell = document.createElement("td");
+    iconCell.className = "icon-cell";
+    iconCell.textContent = iconePourElement(fichier);
+    tr.appendChild(iconCell);
+
     const idCell = document.createElement("td");
     idCell.className = "element-cell";
-    const icone = document.createElement("span");
-    icone.textContent = fichier.kind === "directory" ? "📁 " : "📄 ";
-    idCell.appendChild(icone);
     const code = document.createElement("code");
     code.textContent = fichier.id;
     idCell.appendChild(code);
     tr.appendChild(idCell);
 
     const pathsCell = document.createElement("td");
-    pathsCell.appendChild(construireLigneChemin(t("path_tag_ha"), fichier.ha_path));
+    pathsCell.appendChild(construireLigneChemin(t("path_tag_ha"), afficherCheminHA(fichier.ha_path), fichier.ha_path));
     pathsCell.appendChild(construireLigneChemin(t("path_tag_git"), fichier.git_path));
     tr.appendChild(pathsCell);
 
@@ -1876,8 +1916,9 @@ async function pousserElement(cible, bouton, depuisApercu = false) {
   }
 }
 
-async function normaliserElement(cible) {
-  if (!window.confirm(t("confirm_normalize").replace("{target}", cible))) return;
+async function normaliserElement(cible, direction) {
+  const cle = direction === "git_to_ha" ? "confirm_normalize_git_to_ha" : "confirm_normalize";
+  if (!window.confirm(t(cle).replace("{target}", cible))) return;
 
   const erreur = el("error");
   erreur.style.display = "none";
@@ -3976,11 +4017,12 @@ def construire_etat() -> dict:
                 and etat in {"different", "missing_git"}
             )
 
-        normalizable_now = (
-            kind != "directory"
-            and direction in {"ha_to_git", "bidirectional"}
-            and etat == "equivalent"
-        )
+        # Works for both file and directory mappings, in whichever
+        # direction the mapping is actually configured to write (see
+        # normaliser_git() in gestionnaire.py) — every configured
+        # direction supports it now, so the only real condition left is
+        # the comparison state itself.
+        normalizable_now = etat == "equivalent"
 
         manually_resolvable_now = (
             direction == "bidirectional"
@@ -4038,7 +4080,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/2.5.1"
+    server_version = "HomelabGitManagement/2.6.0"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 

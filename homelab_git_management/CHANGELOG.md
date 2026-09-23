@@ -2,6 +2,34 @@
 
 All notable changes to this add-on are documented here.
 
+## 2.6.0 — "Make identical" now works for every mapping, plus a friendlier table
+
+- Fixed: a mapping stuck in the **equivalent** state (same content, only
+  formatting differs — byte-order mark, line endings, a trailing
+  newline) had no way to become **identical** unless it was a *file*
+  configured `ha_to_git` or `bidirectional`. A `git_to_ha` mapping, or
+  *any* directory mapping (regardless of direction), had no resolve path
+  at all — Deploy/Push both silently treat "equivalent" as "nothing to
+  do", and the old "Make identical" action only ever wrote Home
+  Assistant's bytes into Git. The "⋮ → Make identical" action now works
+  for every direction and both kinds: for `git_to_ha` it writes Git's
+  exact bytes onto Home Assistant directly (a normal backed-up write, no
+  commit involved); for a directory it normalizes every file in the tree
+  that's merely equivalent, in one pass, reusing the same mirror
+  machinery a Deploy/Push already uses.
+- Changed: the "Element" column's file/directory icon now has its own
+  column, and picks something more specific than a generic file icon
+  when it recognizes the mapping — a gear for the four core YAML files,
+  a monitor for a dashboard, a palette for a theme, a scroll for a
+  script.
+- Changed: a path's ellipsis now truncates from the *start* instead of
+  the end, so the actual filename stays visible instead of a repeated
+  directory prefix — and the redundant `/config/` every Home Assistant
+  path starts with is dropped from the display entirely (still shown in
+  full on hover).
+- Changed: the "Manage" column no longer reserves far more width than
+  its buttons ever use — that space now goes to the Paths column.
+
 ## 2.5.1 — a tidier, always-fits table
 
 - Changed: the "HA path" and "Git path" columns are now a single "Paths"
