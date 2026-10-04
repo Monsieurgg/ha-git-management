@@ -144,6 +144,9 @@ button:disabled { opacity: 0.5; cursor: default; }
 .card-label { color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
 .card-value { margin-top: 6px; font-size: 26px; font-weight: 700; }
 .card-meta { margin-top: 5px; color: var(--muted); font-size: 12px; }
+.card.needs-attention { background: var(--candidate-bg); border-color: var(--candidate); animation: pulse-attention 2s ease-in-out infinite; }
+.card.needs-attention .card-label, .card.needs-attention .card-value { color: var(--candidate); }
+@keyframes pulse-attention { 0%, 100% { box-shadow: var(--shadow); } 50% { box-shadow: 0 0 0 4px rgba(146, 64, 14, 0.12); } }
 .panel { overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); margin-bottom: 18px; }
 .panel-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 15px 17px; border-bottom: 1px solid var(--border); }
 .panel-header h2 { margin: 0; font-size: 17px; }
@@ -379,10 +382,10 @@ button.primary { background: var(--accent); color: #fff; border-color: var(--acc
         <div id="different" class="card-value">—</div>
         <div class="card-meta" data-i18n="card_different_meta">actual content</div>
       </div>
-      <div class="card">
-        <div class="card-label" data-i18n="card_candidates">To deploy</div>
+      <div id="candidates-card" class="card">
+        <div class="card-label" data-i18n="card_candidates">To update</div>
         <div id="candidates" class="card-value">—</div>
-        <div class="card-meta" data-i18n="card_candidates_meta">allowed candidates</div>
+        <div class="card-meta" data-i18n="card_candidates_meta">deploys + pushes waiting</div>
       </div>
     </div>
 
@@ -617,7 +620,8 @@ const STRINGS = {
     card_managed: "Managed elements", card_managed_meta: "mappings",
     card_identical: "Identical", card_identical_meta: "strict equality",
     card_different: "Different", card_different_meta: "actual content",
-    card_candidates: "To deploy", card_candidates_meta: "allowed candidates",
+    card_candidates: "To update", card_candidates_meta: "deploys + pushes waiting",
+    tab_title_badge: "({count}) ",
     table_title: "Managed elements", loading: "Loading…",
     th_element: "Element", th_comparison: "Comparison",
     state_identical: "IDENTICAL", state_equivalent: "EQUIVALENT", state_different: "DIFFERENT",
@@ -736,7 +740,8 @@ const STRINGS = {
     card_managed: "Éléments gérés", card_managed_meta: "mappings",
     card_identical: "Identiques", card_identical_meta: "égalité stricte",
     card_different: "Différents", card_different_meta: "contenu réel",
-    card_candidates: "À déployer", card_candidates_meta: "candidats autorisés",
+    card_candidates: "À synchroniser", card_candidates_meta: "déploiements + envois en attente",
+    tab_title_badge: "({count}) ",
     table_title: "Éléments gérés", loading: "Chargement…",
     th_element: "Élément", th_comparison: "Comparaison",
     state_identical: "IDENTIQUE", state_equivalent: "ÉQUIVALENT", state_different: "DIFFÉRENT",
@@ -854,13 +859,25 @@ if (lang !== "en" && lang !== "fr") {
 
 function t(key) { return STRINGS[lang][key] || key; }
 
+// How many mappings currently need attention (set by afficherEtat() from
+// summary.action_needed) — kept outside applyTranslations() so a language
+// switch re-renders the same badge instead of losing it.
+let dernierCompteurActions = 0;
+
+function mettreAJourTitreOnglet() {
+  const prefixe = dernierCompteurActions > 0
+    ? t("tab_title_badge").replace("{count}", dernierCompteurActions)
+    : "";
+  document.title = prefixe + t("title");
+}
+
 function applyTranslations() {
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     el.textContent = t(el.getAttribute("data-i18n"));
   });
   document.getElementById("lang-toggle").textContent = lang === "en" ? "FR" : "EN";
   document.getElementById("refresh").textContent = t("refresh");
-  document.title = t("title");
+  mettreAJourTitreOnglet();
 }
 
 function switchLang() {
@@ -1118,7 +1135,11 @@ function afficherEtat(donnees) {
   el("managed").textContent = donnees.summary.managed;
   el("identical").textContent = donnees.summary.identical;
   el("different").textContent = donnees.summary.different;
-  el("candidates").textContent = donnees.summary.deployable_now;
+  el("candidates").textContent = donnees.summary.action_needed;
+  el("candidates-card").classList.toggle("needs-attention", donnees.summary.action_needed > 0);
+
+  dernierCompteurActions = donnees.summary.action_needed;
+  mettreAJourTitreOnglet();
 
   const commit = donnees.git.head ? donnees.git.head.slice(0, 12) : "?";
   const clean = donnees.git.clean ? "clean" : "modified";
@@ -1127,7 +1148,18 @@ function afficherEtat(donnees) {
   const tbody = el("rows");
   tbody.replaceChildren();
 
-  for (const fichier of donnees.elements) {
+  // Rows needing attention (a Deploy/Push waiting, or a conflict to
+  // resolve) float to the top — same condition as the server's
+  // summary.action_needed, see construire_etat(). A stable sort, so
+  // elements keep their relative (alphabetical-by-id) order within
+  // each group.
+  const aBesoinAttention = (f) =>
+    f.deployable_now || f.pushable_now || f.sync_status === "conflict" || f.sync_status === "external";
+  const elementsTries = [...donnees.elements].sort(
+    (a, b) => (aBesoinAttention(b) ? 1 : 0) - (aBesoinAttention(a) ? 1 : 0)
+  );
+
+  for (const fichier of elementsTries) {
     const tr = document.createElement("tr");
 
     const selCell = document.createElement("td");
@@ -2432,9 +2464,18 @@ document.querySelectorAll(".browse-btn").forEach((bouton) => {
 el("browse-modal-close").addEventListener("click", fermerBrowse);
 el("browse-select-here").addEventListener("click", () => selectionnerCheminBrowse(browseCheminCourant));
 
+const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+
 applyTranslations();
 chargerEtatSiConfigure();
 setInterval(chargerEtatSiConfigure, 5000);
+// chargerEtatSiConfigure() above only re-reads the comparison already in
+// memory (cheap, local) — it never re-fetches GitHub on its own. This is
+// the actual "keep it current automatically" refresh, on a much longer
+// interval since it's a real network fetch: same actualiserGit() the
+// Refresh button itself calls, so the button's own brief "Refreshing…"
+// state doubles as visible confirmation this ran.
+setInterval(() => { if (!el("dashboard").hidden) actualiserGit(); }, AUTO_REFRESH_INTERVAL_MS);
 </script>
 </body>
 </html>
@@ -4069,6 +4110,18 @@ def construire_etat() -> dict:
             "equivalent": sum(1 for f in fichiers if f["state"] == "equivalent"),
             "different": sum(1 for f in fichiers if f["state"] == "different"),
             "deployable_now": sum(1 for f in fichiers if f["deployable_now"]),
+            # Everything genuinely actionable right now, in either
+            # direction (including a conflict/external state waiting on
+            # "Resolve") — backs the browser tab title and the
+            # highlighted summary card, both meant to answer "how many
+            # files need my attention", not just "how many are
+            # deployable Git -> HA". Mirrored client-side in afficherEtat()
+            # to decide the table's row order — keep both in sync.
+            "action_needed": sum(
+                1 for f in fichiers
+                if f["deployable_now"] or f["pushable_now"]
+                or f["sync_status"] in {"conflict", "external"}
+            ),
         },
         "elements": fichiers,
     }
@@ -4080,7 +4133,7 @@ def construire_etat() -> dict:
 
 class InterfaceHandler(BaseHTTPRequestHandler):
 
-    server_version = "HomelabGitManagement/2.6.0"
+    server_version = "HomelabGitManagement/2.7.0"
 
     def envoyer_entetes(self, statut: int, type_contenu: str) -> None:
 

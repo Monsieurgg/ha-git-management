@@ -2,6 +2,27 @@
 
 All notable changes to this add-on are documented here.
 
+## 2.7.0 — automatic refresh, and a way to see what's waiting without opening the add-on
+
+- Added: the add-on now refreshes its Git clone on its own, every 5
+  minutes, the same read-only fetch from GitHub the "Refresh" button
+  already triggers — no need to keep clicking it for the comparison to
+  stay current.
+- Added: the browser tab's title shows a `(N)` count whenever N mappings
+  need attention (a Deploy or Push waiting, or a conflict to resolve) —
+  visible in the tab itself or the taskbar without the panel focused.
+  Home Assistant's own sidebar has no supported way for an add-on to
+  show a badge there, so this is the closest equivalent: open the panel
+  once and the tab keeps the count visible from then on.
+- Changed: the "To deploy" summary card is now "To update" and counts
+  everything actionable in either direction (Deploy waiting, Push
+  waiting, or a conflict to resolve) instead of only Git → Home
+  Assistant candidates — and turns amber and pulses gently whenever
+  that count is above zero.
+- Changed: rows needing attention now sort to the top of the "Managed
+  elements" table, so the ones worth looking at are never buried below
+  a long list of already-identical mappings.
+
 ## 2.6.0 — "Make identical" now works for every mapping, plus a friendlier table
 
 - Fixed: a mapping stuck in the **equivalent** state (same content, only

@@ -64,6 +64,20 @@ Assistant config mount and the local Git clone, never their content, and
 never anything outside them. Dotfiles/dotdirs (`.storage`, `.git`, ...)
 are hidden.
 
+**Keeping the comparison current without opening the panel.** The
+dashboard refetches GitHub on its own every 5 minutes — the same
+read-only fetch the "Refresh" button triggers by hand — so the
+comparison doesn't go stale just because nobody clicked it. Whenever at
+least one mapping needs attention (a Deploy or Push waiting, or a
+conflict to resolve), the browser tab's title gets a `(N)` count
+prefixed to it, visible in the tab or the taskbar without the panel in
+focus, and the "To update" summary card turns amber. Rows needing
+attention also sort to the top of the table, ahead of anything already
+identical. Home Assistant itself has no supported way for an add-on to
+add a badge to its own entry in the sidebar, so the tab title is the
+closest equivalent this can offer — it only ever reflects what the last
+comparison found, the same as everything else on this page.
+
 **Security note:** this is the one feature where the add-on writes its own
 configuration, instead of only reading it. It does so through Home
 Assistant Supervisor's own API, scoped to `/addons/self/options` — by
